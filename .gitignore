@@ -20,6 +20,7 @@ logs/
 *.bak*
 *.backup*
 config.local*.json
+gamepad.local*.json
 .env
 .env.*
 *.pem

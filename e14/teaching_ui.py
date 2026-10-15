@@ -49,7 +49,7 @@ catch(e){document.querySelector('#message').textContent='采集程序连接已�
 
 class Dashboard:
     """Loopback-only preview and bounded intent queue; no global keyboard hooks."""
-    def __init__(self, port=8766):
+    def __init__(self, port=8766, *, page=PAGE):
         if isinstance(port, bool) or not isinstance(port, int) or not 0 <= port <= 65535:
             raise ValueError("preview_port must be 0..65535")
         self.commands = queue.Queue(maxsize=32)
@@ -75,7 +75,7 @@ class Dashboard:
 
             def do_GET(self):
                 if self.path == "/":
-                    self.reply(200, PAGE.replace("__TOKEN__", json.dumps(dashboard.token)).encode(), "text/html; charset=utf-8")
+                    self.reply(200, page.replace("__TOKEN__", json.dumps(dashboard.token)).encode(), "text/html; charset=utf-8")
                 elif self.path == "/state":
                     with dashboard.lock:
                         state = dict(dashboard.state)
@@ -240,7 +240,7 @@ class GripperControl:
 
 
 class TeachingSession:
-    def __init__(self, args, robot, cameras, dashboard, *, clock=time.monotonic, sleep=time.sleep):
+    def __init__(self, args, robot, cameras, dashboard, *, clock=time.monotonic, sleep=time.sleep, startup_gripper=True):
         if not math.isfinite(args.duration) or args.duration <= 0 or not args.task.strip():
             raise ValueError("Need a task and positive duration")
         self.args, self.robot, self.cameras, self.dashboard = args, robot, cameras, dashboard
@@ -262,11 +262,12 @@ class TeachingSession:
         self.latest = None
         self.camera_frame = None
         self.device_errors = []
-        try:
-            self.gripper.request(True)
-        except (ValueError, RuntimeError, OSError) as exc:
-            self.gripper.fail(exc)
-            self.message = "夹爪准备失败；画面和姿态记录仍可使用，请查看下方提示。"
+        if startup_gripper:
+            try:
+                self.gripper.request(True)
+            except (ValueError, RuntimeError, OSError) as exc:
+                self.gripper.fail(exc)
+                self.message = "夹爪准备失败；画面和姿态记录仍可使用，请查看下方提示。"
 
     def _event(self, event):
         if self.event_stream is not None:
@@ -485,6 +486,12 @@ class TeachingSession:
             raise RuntimeError(control_error or self.gripper.error or "; ".join(self.device_errors))
         return not (self.stop_recording or self.quit)
 
+    def recording_metadata(self):
+        return {"mode": "interactive_gripper", "initial_joint_angles_deg": self.latest["state"][:6],
+                "initial_gripper_width_m": self.latest["state"][6], "home_file": str(self.args.home_file),
+                "open_width_m": self.args.open_width, "close_width_m": self.args.close_width,
+                "gripper_effort_sdk": self.robot.settings["gripper_effort"], "operator_events": "events.jsonl"}
+
     def record(self):
         self.args.output.mkdir(parents=True, exist_ok=True)
         indices = [int(p.name[8:]) for p in self.args.output.glob("episode_*") if p.is_dir() and p.name[8:].isdigit()]
@@ -492,13 +499,9 @@ class TeachingSession:
         self.start_requested, self.stop_recording, self.requested_outcome = False, False, None
         self.status, self.active_path = "recording", path
         self.message = "正在录制。O 张开 / C 闭合；空格结束后标注，或 S/F 直接结束并标注。"
-        print(f"Recording {path}; gripper keys active, no arm-joint commands", flush=True)
+        print(f"Recording {path}; operator inputs and targets audited in events.jsonl", flush=True)
         try:
-            metadata = {"mode": "interactive_gripper", "initial_joint_angles_deg": self.latest["state"][:6],
-                        "initial_gripper_width_m": self.latest["state"][6], "home_file": str(self.args.home_file),
-                        "open_width_m": self.args.open_width, "close_width_m": self.args.close_width,
-                        "gripper_effort_sdk": self.robot.settings["gripper_effort"],
-                        "operator_events": "events.jsonl"}
+            metadata = self.recording_metadata()
             # record_episode creates the directory, so open the audit stream on its first tick.
             def before_sample(index):
                 if self.event_stream is None:

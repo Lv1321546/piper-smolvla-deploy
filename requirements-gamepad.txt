@@ -1,0 +1,2 @@
+# Extra dependency; do not install upstream requirements over the LeRobot env.
+pygame==2.6.1

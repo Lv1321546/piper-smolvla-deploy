@@ -480,7 +480,7 @@ class PiperRobot(_Robot):
             return {"commanded_width_m": raw / 1_000_000, "effort_sdk": effort,
                     "command_monotonic": self._clock(), "feedback_before_m": snap["state"][6]}
 
-    def prepare_control(self):
+    def prepare_control(self, *, joint_only=False):
         """Select CAN/MOVE_J and enable, never reset or send a joint movement goal.
 
         Gripper enable uses GripperCtrl at its current opening; this is still an
@@ -502,7 +502,7 @@ class PiperRobot(_Robot):
             if not all(snap["enabled"]):
                 self._backend.enable()
                 snap = self._wait(lambda s: all(s["enabled"]), 5.)
-            if self.settings["enable_gripper"] and not snap["gripper_enabled"]:
+            if not joint_only and self.settings["enable_gripper"] and not snap["gripper_enabled"]:
                 width = snap["state"][6]
                 lo, hi = self.settings["gripper_limits_m"]
                 if not lo <= width <= hi:
@@ -511,23 +511,61 @@ class PiperRobot(_Robot):
                 self._wait(lambda s: s["gripper_enabled"], 3.)
             self._last_target = None
             self._last_sent = None
-            self.check_ready()
+            self.check_ready(check_gripper=not joint_only)
             self._prepared = True
 
-    def check_ready(self):
+    def check_ready(self, *, check_gripper=True):
         snap = self._snapshot()
         self._healthy(snap)
         if snap["ctrl_mode"] != 1 or snap["mode_feed"] != 1 or not all(snap["enabled"]):
             raise RuntimeError("PiPER needs CAN control, MOVE_J and all six motors enabled")
-        if self.settings["enable_gripper"] and not snap["gripper_enabled"]:
+        if check_gripper and self.settings["enable_gripper"] and not snap["gripper_enabled"]:
             raise RuntimeError("Gripper is not enabled")
         tolerance = self.settings["feedback_limit_tolerance_deg"]
         for name, value, (low, high) in zip(ACTION_NAMES[:6], snap["state"][:6], self.settings["joint_limits_deg"]):
             if not low - tolerance <= value <= high + tolerance:
                 raise RuntimeError(f"{name} feedback {value} outside configured limits plus {tolerance} degree tolerance")
-        if not self.settings["gripper_limits_m"][0] - 1e-6 <= snap["state"][6] <= self.settings["gripper_limits_m"][1] + 1e-6:
+        if check_gripper and not self.settings["gripper_limits_m"][0] - 1e-6 <= snap["state"][6] <= self.settings["gripper_limits_m"][1] + 1e-6:
             raise RuntimeError("Gripper feedback outside configured metre limits")
         return snap
+
+    def send_joint_action(self, joints):
+        """Six-joint teleop goal, never sends or silently enables the gripper.
+
+        Independent manual gripper commands use command_gripper(). This lets
+        joint motion tolerate measured jaw boundary offsets without treating
+        the raw jaw reading as a new seven-dimensional actuator target.
+        """
+        with self._command_lock:
+            if not self._prepared:
+                raise RuntimeError("Call prepare_control() explicitly before motion")
+            snap = self.check_ready(check_gripper=False)
+            if not isinstance(joints, (list, tuple)) or len(joints) != 6:
+                raise ValueError("Six joint targets required")
+            target = [_number(v, 'joint target') for v in joints]
+            sent = [round(v * 1000) / 1000 for v in target]
+            for values in (target, sent):
+                for v, (lo,hi) in zip(values, self.settings['joint_limits_deg']):
+                    if not lo <= v <= hi:
+                        raise ValueError("Teleop joint target outside configured limits")
+                for ref in [snap['state']] + ([self._last_target] if self._last_target else []):
+                    if any(abs(a-b)>limit+1e-9 for a,b,limit in zip(values,ref,self.settings['max_step_delta'][:6])):
+                        raise ValueError("Teleop joint target exceeds per-cycle tracking/step limit")
+            if (self._last_sent is not None and sent != self._last_target[:6]
+                    and self._clock()-self._last_sent < .8/self.settings['control_hz']):
+                raise RuntimeError("Teleop target arrived faster than control_hz")
+            try:
+                self._backend.joint([round(v*1000) for v in sent])
+            except BaseException:
+                self._prepared = False
+                try:
+                    self.stop()
+                except Exception:
+                    pass
+                raise
+            self._last_target = sent + [snap['state'][6]]
+            self._last_sent = self._clock()
+            return sent
 
     def _validate_target(self, action):
         target = self._vector(action, "action")

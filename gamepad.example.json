@@ -1,0 +1,17 @@
+{
+  "_note": "仅手柄配置。复制成 gamepad.local.json；先用 e14.gamepad --monitor 核对轴号和扳机静止值。",
+  "gamepad": {
+    "index": 0,
+    "guid": null,
+    "deadzone": 0.12,
+    "trigger_min": -1.0,
+    "trigger_max": 1.0,
+    "axis_map": {"left_x": 0, "left_y": 1, "right_x": 3, "right_y": 4, "left_trigger": 2, "right_trigger": 5},
+    "button_map": {"a": 0, "b": 1, "x": 2, "y": 3, "lb": 4, "rb": 5, "back": 6, "start": 7},
+    "linear_speed_m_s": 0.02,
+    "angular_speed_rad_s": 0.15,
+    "joint_speed_deg_s": 8,
+    "workspace_radius_m": 0.15,
+    "allow_rotation": false
+  }
+}
