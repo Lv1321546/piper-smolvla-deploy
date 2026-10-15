@@ -35,7 +35,7 @@ PAGE = r'''<!doctype html><html lang="zh-CN"><meta charset="utf-8">
 <div><button data-c="record">R 开始录制</button><button data-c="finish">空格 结束</button></div>
 <div><button data-c="success">S 成功并保存</button><button data-c="failure">F 失败并保存</button><button data-c="unknown">U 暂不标注</button></div>
 <div><button data-c="save_home">K 记录初始姿态</button><button data-c="home">H 返回并张爪</button></div>
-<button data-c="quit">Q 退出</button><pre id="stats"></pre><details><summary>运行详情</summary><pre id="debug"></pre></details>
+<button data-c="quit">Q 退出</button><pre id="stats"></pre><p id="warnings" style="white-space:pre-wrap;color:#ffb5b5"></p><details><summary>运行详情</summary><pre id="debug"></pre></details>
 <small>先手动调整到能看清方块和鼠标垫的位置。录制前自动张爪并检查真实反馈；录制结束保持夹爪当前状态。</small></section></main>
 <script>const token=__TOKEN__;let status='';
 async function command(c){try{let r=await fetch('/command',{method:'POST',headers:{'Content-Type':'application/json','X-Teaching-Token':token},body:JSON.stringify({command:c})});if(!r.ok)throw Error(await r.text());}catch(e){document.querySelector('#message').textContent=e.message}}
@@ -43,7 +43,7 @@ document.querySelectorAll('button').forEach(b=>b.onclick=()=>command(b.dataset.c
 const keys={o:'open',c:'close',r:'record',' ':'finish',s:'success',f:'failure',u:'unknown',k:'save_home',h:'home',q:'quit'};
 document.addEventListener('keydown',e=>{if(e.repeat||e.ctrlKey||e.metaKey||e.altKey||['INPUT','TEXTAREA'].includes(e.target.tagName))return;const c=keys[e.key.toLowerCase()];if(c){e.preventDefault();command(c)}});
 async function refresh(){try{let r=await fetch('/state',{cache:'no-store'});let s=await r.json();status=s.status;document.querySelector('#badge').textContent=s.status_label;document.querySelector('#badge').style.background=status==='recording'?'#a82035':'#24374c';document.querySelector('#message').textContent=s.message;
-document.querySelector('#stats').textContent=[s.mock?'模拟设备':'真实设备','实际开口：'+s.gripper_width_mm+' mm','目标开口：'+(s.gripper_target_mm??'保持')+' mm','当前/最近记录：'+s.recorded_frames+' 帧','本次已标注：'+s.saved_episodes+' 条','图像更新于：'+Math.max(...Object.values(s.image_age_ms))+' ms 前',s.episode?'记录：'+s.episode:''].join('\n');document.querySelector('#debug').textContent=JSON.stringify(s,null,2);document.querySelectorAll('button').forEach(b=>{let c=b.dataset.c;b.disabled=(['home','save_home','record'].includes(c)&&['recording','returning'].includes(status))||(c==='record'&&['review','finished'].includes(status))});}
+document.querySelector('#stats').textContent=[s.mock?'模拟设备':'真实设备',s.ctrl_mode_label??'','实际开口：'+(s.gripper_width_mm??'无新反馈')+' mm','目标开口：'+(s.gripper_target_mm??'未发送新目标')+' mm','夹爪：'+(s.gripper_status??'等待反馈'),'当前/最近记录：'+s.recorded_frames+' 帧','本次已标注：'+s.saved_episodes+' 条','图像更新于：'+Math.max(0,...Object.values(s.image_age_ms??{}))+' ms 前',s.episode?'记录：'+s.episode:''].join('\n');document.querySelector('#warnings').textContent=(s.warnings??[]).join('\n');document.querySelector('#debug').textContent=JSON.stringify(s,null,2);document.querySelectorAll('button').forEach(b=>{let c=b.dataset.c;b.disabled=(['home','save_home','record'].includes(c)&&['recording','returning'].includes(status))||(c==='record'&&['review','finished'].includes(status))});}
 catch(e){document.querySelector('#message').textContent='采集程序连接已断开，请检查终端。'}setTimeout(refresh,250)}refresh();</script></html>'''
 
 
@@ -151,6 +151,9 @@ class Dashboard:
 
 
 class GripperControl:
+    # Measurement tolerance only. Never expand command limits or rewrite logs.
+    FEEDBACK_TOLERANCE_M = .003
+
     def __init__(self, robot, open_width=.06, close_width=0., speed=.03, *, clock=time.monotonic):
         self.robot, self.clock = robot, clock
         low, high = robot.settings["gripper_limits_m"]
@@ -162,15 +165,33 @@ class GripperControl:
         self.last_command = None
         self.last_sent_at = None
         self.requested_at = None
+        self.initial_width = None
+        self.response_seen = False
+        self.error = None
         self.events = deque(maxlen=200)
 
     def request(self, opening):
+        self.suspend()  # A rejected replacement must not leave an old ramp running.
+        self.error = None
+        measured = self.robot.get_feedback()["state"][6]
+        low, high = self.robot.settings["gripper_limits_m"]
+        if (not math.isfinite(measured)
+                or not low - self.FEEDBACK_TOLERANCE_M <= measured <= high + self.FEEDBACK_TOLERANCE_M):
+            raise ValueError(f"夹爪反馈 {measured * 1000:g} mm 超出范围及 3 mm 测量容差；暂停夹爪，请检查行程/零点。")
         self.target = self.open_width if opening else self.close_width
-        self.last_command = self.robot.get_feedback()["state"][6]
+        self.initial_width = measured
+        self.response_seen = False
+        self.last_command = max(low, min(high, measured))
         self.last_sent_at = None
         self.requested_at = self.clock()
         self.events.append({"event": "gripper_request", "monotonic": self.requested_at,
-                            "target_m": self.target})
+                            "target_m": self.target, "measured_width_m": measured,
+                            "ramp_start_m": self.last_command})
+
+    def fail(self, error):
+        self.suspend()
+        self.error = str(error)
+        self.events.append({"event": "gripper_suspended", "message": self.error, "monotonic": self.clock()})
 
     def tick(self):
         if self.target is None:
@@ -179,9 +200,25 @@ class GripperControl:
         period = 1 / self.robot.settings["control_hz"]
         if self.last_sent_at is not None and now - self.last_sent_at < period * .8:
             return
+        feedback = self.robot.get_feedback()
+        measured = feedback["state"][6]
+        low, high = self.robot.settings["gripper_limits_m"]
+        if (not math.isfinite(measured)
+                or not low - self.FEEDBACK_TOLERANCE_M <= measured <= high + self.FEEDBACK_TOLERANCE_M):
+            raise RuntimeError("夹爪反馈超出范围及 3 mm 测量容差，已暂停夹爪。")
+        # A successful send is not actuator acknowledgement. A contact while
+        # closing can stop motion above zero, so do not require a zero reading.
+        self.response_seen |= feedback["gripper_enabled"] and abs(measured - self.initial_width) >= .0005
+        arrived = feedback["gripper_enabled"] and abs(measured - self.target) <= .002
+        if self.last_sent_at is not None and not arrived:
+            elapsed = now - self.requested_at
+            opening_timeout = abs(self.target - self.initial_width) / self.speed + 3.
+            if ((elapsed > 2 and not self.response_seen)
+                    or (self.target == self.open_width and elapsed > opening_timeout)):
+                raise RuntimeError("夹爪未响应/未达到张开目标；已暂停发送并取消等待录制。示教模式可能忽略软件夹爪命令；闭合时也可能已接触物体。请检查实机，确认后再按 O/C 重试。")
         # Cap each target increment even if the operator/UI loop was delayed.
         step = min(self.speed * period, self.robot.settings["max_step_delta"][6])
-        width = self.last_command + max(-step, min(step, self.target - self.last_command))
+        width = max(low, min(high, self.last_command + max(-step, min(step, self.target - self.last_command))))
         event = self.robot.command_gripper(width)
         self.last_command, self.last_sent_at = event["commanded_width_m"], now
         self.events.append({"event": "gripper_command", **event})
@@ -214,7 +251,13 @@ class TeachingSession:
         self.event_stream = None
         self.active_path = None
         self.latest = None
-        self.gripper.request(True)
+        self.camera_frame = None
+        self.device_errors = []
+        try:
+            self.gripper.request(True)
+        except (ValueError, RuntimeError, OSError) as exc:
+            self.gripper.fail(exc)
+            self.message = "夹爪准备失败；画面和姿态记录仍可使用，请查看下方提示。"
 
     def _event(self, event):
         if self.event_stream is not None:
@@ -223,16 +266,24 @@ class TeachingSession:
 
     def _save_home(self):
         feedback = self.robot.get_feedback()
-        # The saved pose must also be a legal future joint target.
-        self.robot._validate_target(feedback["state"])
+        # Capturing an observed reference is not a motion request. In particular
+        # a noisy gripper boundary must not prevent saving six joint angles.
+        joints = feedback["state"][:6]
+        if len(joints) != 6 or any(not math.isfinite(q) for q in joints):
+            raise ValueError("初始姿态需要六个有效关节角度")
+        outside = [i + 1 for i, (q, (low, high)) in enumerate(zip(joints, self.robot.settings["joint_limits_deg"]))
+                   if not low <= q <= high]
         path = self.args.home_file
         path.parent.mkdir(parents=True, exist_ok=True)
-        write_json(path, {"schema_version": 1, "joint_unit": "degree", "joint_angles": feedback["state"][:6],
+        write_json(path, {"schema_version": 1, "joint_unit": "degree", "joint_angles": joints,
+                          "joints_outside_target_limits": outside,
                           "camera_names": list(self.cameras.config), "created_unix_s": time.time(),
                           "note": "Operator-selected global view, not a calibrated Cartesian pose."})
         for name, rgb in self.cameras.read()["images"].items():
             Image.fromarray(rgb).save(path.parent / f"{path.stem}-{name}.png")
         self.message = f"初始姿态已记录：{path}。H 可在录制外返回，R 不要求与它完全一致。"
+        if outside:
+            self.message += f"关节 {outside} 的原始反馈超出目标范围，返回前需要重新调整并记录。"
 
     def _start_home(self):
         data = json.loads(self.args.home_file.read_text())
@@ -242,14 +293,17 @@ class TeachingSession:
         if not isinstance(joints, list) or len(joints) != 6:
             raise ValueError("Initial pose needs six joint_angles")
         feedback = self.robot.get_feedback()
-        self.robot._validate_target(joints + [feedback["state"][6]])
+        self.robot._validate_target(joints + [self.robot.settings["gripper_limits_m"][0]])
         if not self.robot.mock and feedback["ctrl_mode"] == 2:
             raise RuntimeError("返回前请手动退出按键示教；程序不复位、不强制切出示教。")
+        if not self.robot.mock and not self.robot.settings["stop_strategy_verified"]:
+            raise RuntimeError("H 返回尚不可用：robot.stop_strategy_verified=false。需现场验证所选停止方式后才能启用六关节返回；K 保存和相机预览可正常使用。")
         if self.robot.mock:
             self.robot._backend.mode = 0  # Simulate the operator leaving button teaching.
             self.robot._backend.refresh()
         self.robot.prepare_control()
         self.gripper.suspend()
+        self.start_requested = False
         self.home_after_status = self.status
         self.home_target, self.home_started = joints, self.clock()
         self.status, self.message = "returning", "返回初始姿态中。Q/空格取消并调用已配置停止；完成后重新按实体按钮进入拖动示教。"
@@ -275,15 +329,24 @@ class TeachingSession:
         self._event({"event": "operator_key", "command": command, "monotonic": self.clock()})
         if self.status == "returning":
             if command in {"quit", "finish"}:
-                self.robot.stop()
-                self.home_target = None
-                self.status, self.message = self.home_after_status, "返回已停止；按停止策略处理实机后再继续。"
-                self.quit = command == "quit"
+                try:
+                    self.robot.stop()
+                finally:
+                    # Even a failed stop must latch off further home targets.
+                    self.home_target = None
+                    self.gripper.suspend()
+                    self.start_requested = False
+                    self.status = self.home_after_status
+                    self.quit = command == "quit"
+                self.message = "已发送返回停止请求；请确认实机已停止再继续。"
             else:
                 self.message = "返回中只接受空格取消或 Q 退出。"
             return
         if command in {"open", "close"}:
             self.gripper.request(command == "open")
+            if command == "close":
+                self.start_requested = False
+            self.message = ("已请求张开" if command == "open" else "已请求闭合") + "；以下方实际开口变化为准。"
         elif command == "quit":
             self.quit, self.stop_recording, self.start_requested = True, True, False
         elif command in {"save_home", "home"}:
@@ -300,8 +363,12 @@ class TeachingSession:
             feedback = self.robot.get_feedback()
             if not self.robot.mock and feedback["ctrl_mode"] != 2:
                 raise RuntimeError("请先用实体按钮进入拖动示教，再开始手拖录制；程序不会自动切模式。")
-            self.gripper.request(True)
             self.start_requested = True
+            try:
+                self.gripper.request(True)
+            except (ValueError, RuntimeError, OSError):
+                self.start_requested = False
+                raise
             self.message = "开始请求已收到，等待真实张爪反馈；确认视野里有方块和鼠标垫。"
         elif command in {"finish", "success", "failure", "unknown"}:
             if self.status == "recording":
@@ -326,25 +393,42 @@ class TeachingSession:
         self.start_requested = False
 
     def publish(self, frame_index=None):
-        feedback = self.robot.get_feedback()
-        camera_frame = self.cameras.read()
+        self.device_errors = []
+        try:
+            feedback = self.robot.get_feedback()
+        except (ValueError, RuntimeError, OSError) as exc:
+            feedback = None
+            self.device_errors.append(f"机械臂反馈不可用：{exc}")
+        try:
+            self.camera_frame = self.cameras.read()
+        except (ValueError, RuntimeError, OSError) as exc:
+            self.device_errors.append(f"相机画面无新数据（显示的是最后一帧）：{exc}")
+        camera_frame = self.camera_frame or {"images": {}, "image_timestamps": {}}
         self.latest = feedback
-        warning = ""
-        if (self.gripper.target == self.gripper.open_width and not self.gripper.is_open(feedback)
-                and self.clock() - self.gripper.requested_at > 5):
-            warning = "张爪反馈未达到目标；可能是示教固件不接受软件夹爪命令。不会自动复位或切模式，请先检查夹爪。"
+        warnings = list(self.device_errors)
+        if self.gripper.error:
+            warnings.append(self.gripper.error)
+        if feedback and feedback["ctrl_mode"] == 2 and not self.args.mock:
+            warnings.append("实体示教模式：O/C 是否有效取决于固件，发送成功不代表夹爪已执行；H 返回需先退出示教。")
+        if not self.robot.mock and not self.robot.settings["stop_strategy_verified"]:
+            warnings.append("H 返回未启用：尚未现场验证停止策略。K 只保存姿态，不移动。")
+        mode = None if feedback is None else feedback["ctrl_mode"]
+        grip_status = ("已暂停，请处理提示后按 O/C 重试" if self.gripper.error else
+                       "已观测到开口变化" if self.gripper.response_seen else "等待执行反馈")
         labels = {"preparing": "准备中", "recording": "录制中", "review": "待标注", "returning": "返回中", "finished": "本次采集完成"}
         image_ages = {name: round((self.clock() - t) * 1000, 1) for name, t in camera_frame["image_timestamps"].items()}
         self.dashboard.update({"status": self.status, "status_label": labels[self.status],
-                               "message": warning or self.message, "mock": self.args.mock,
+                               "message": self.message, "warnings": warnings, "mock": self.args.mock,
                                "task": self.args.task, "frame_index": frame_index,
                                "recorded_frames": frame_index if frame_index is not None else self.last_frame_count,
                                "episode": str(self.active_path or self.review_path or ""),
                                "saved_episodes": self.completed, "image_age_ms": image_ages,
-                               "joint_angles_deg": feedback["state"][:6],
-                               "gripper_width_mm": round(feedback["state"][6] * 1000, 2),
+                               "joint_angles_deg": None if feedback is None else feedback["state"][:6],
+                               "gripper_width_mm": None if feedback is None else round(feedback["state"][6] * 1000, 2),
                                "gripper_target_mm": None if self.gripper.target is None else round(self.gripper.target * 1000, 2),
-                               "gripper_enabled": feedback["gripper_enabled"], "ctrl_mode": feedback["ctrl_mode"],
+                               "gripper_status": grip_status,
+                               "gripper_enabled": False if feedback is None else feedback["gripper_enabled"], "ctrl_mode": mode,
+                               "ctrl_mode_label": {1: "CAN 控制", 2: "实体示教模式", None: "无新状态反馈"}.get(mode, f"控制模式 {mode}"),
                                "home_file": str(self.args.home_file)}, camera_frame["images"])
 
     def poll(self, frame_index=None):
@@ -353,17 +437,39 @@ class TeachingSession:
                 self.handle(command)
             except (ValueError, RuntimeError, OSError, KeyError) as exc:
                 self.message = str(exc)
+                if command in {"open", "close", "record"}:
+                    self.start_requested = False
+                    self.gripper.fail(exc)
                 self._event({"event": "command_rejected", "command": command, "message": str(exc), "monotonic": self.clock()})
-        if self.quit or self.stop_recording:
-            # Do not send another ramp target after an operator stop/quit key.
-            pass
-        elif self.home_target is not None:
-            self._home_tick()
-        else:
-            self.gripper.tick()
+        control_error = None
+        try:
+            if self.quit or self.stop_recording:
+                # Do not send another ramp target after an operator stop/quit key.
+                pass
+            elif self.home_target is not None:
+                self._home_tick()
+            else:
+                self.gripper.tick()
+        except (ValueError, RuntimeError, OSError) as exc:
+            control_error = str(exc)
+            self.start_requested = False
+            self.gripper.fail(exc)
+            self.message = "控制已暂停，实时预览保留；详情见下方提示。"
+            if self.home_target is not None:
+                try:
+                    self.robot.stop()
+                except (RuntimeError, OSError) as stop_exc:
+                    self.message += f"返回停止指令也未确认：{stop_exc}。请在实机处理。"
+                self.home_target = None
+                self.status = self.home_after_status
         while self.gripper.events:
             self._event(self.gripper.events.popleft())
         self.publish(frame_index)
+        if self.device_errors:
+            self.gripper.suspend()
+            self.start_requested = False
+        if self.status == "recording" and (control_error or self.gripper.error or self.device_errors):
+            raise RuntimeError(control_error or self.gripper.error or "; ".join(self.device_errors))
         return not (self.stop_recording or self.quit)
 
     def record(self):
@@ -393,6 +499,19 @@ class TeachingSession:
             self.message = f"已录 {manifest['frames']} 帧，夹爪保持当前状态。S 成功 / F 失败 / U 暂不标注。"
             if self.requested_outcome:
                 self._label(self.requested_outcome)
+        except (ValueError, RuntimeError, OSError) as exc:
+            self.last_frame_count = 0
+            manifest_path = path / "manifest.json"
+            if manifest_path.exists():
+                failed = json.loads(manifest_path.read_text())
+                self.last_frame_count = failed.get("frames", 0)
+                failed.update(status="failed", task_outcome="unknown", error=f"{type(exc).__name__}: {exc}")
+                write_json(manifest_path, failed)
+            self.gripper.suspend()
+            self.review_path = None
+            self.status = "preparing"
+            self.message = f"本条录制失败，未计入成功数据：{exc}。文件保留在 {path}；预览继续，处理后可按 R 重试。"
+            print(self.message, flush=True)
         finally:
             if self.event_stream is not None:
                 self.event_stream.close()
@@ -406,7 +525,7 @@ class TeachingSession:
             while not self.quit:
                 tick = self.clock()
                 self.poll()
-                if self.start_requested and self.gripper.is_open(self.latest):
+                if self.start_requested and self.latest and not self.device_errors and self.gripper.is_open(self.latest):
                     self.record()
                 self.sleep(max(0, period - (self.clock() - tick)))
         finally:
