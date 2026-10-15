@@ -36,7 +36,7 @@ PAGE = r'''<!doctype html><html lang="zh-CN"><meta charset="utf-8">
 <div><button data-c="success">S 成功并保存</button><button data-c="failure">F 失败并保存</button><button data-c="unknown">U 暂不标注</button></div>
 <div><button data-c="save_home">K 记录初始姿态</button><button data-c="home">H 返回并张爪</button></div>
 <button data-c="quit">Q 退出</button><pre id="stats"></pre><p id="warnings" style="white-space:pre-wrap;color:#ffb5b5"></p><details><summary>运行详情</summary><pre id="debug"></pre></details>
-<small>先手动调整到能看清方块和鼠标垫的位置。录制前自动张爪并检查真实反馈；录制结束保持夹爪当前状态。</small></section></main>
+<small>CAN 模式可用 O/C 测试夹爪，此时不要手拖关节。手拖抓取采集需要固件支持示教期间的软件夹爪；录制结束保持夹爪当前状态。</small></section></main>
 <script>const token=__TOKEN__;let status='';
 async function command(c){try{let r=await fetch('/command',{method:'POST',headers:{'Content-Type':'application/json','X-Teaching-Token':token},body:JSON.stringify({command:c})});if(!r.ok)throw Error(await r.text());}catch(e){document.querySelector('#message').textContent=e.message}}
 document.querySelectorAll('button').forEach(b=>b.onclick=()=>command(b.dataset.c));
@@ -156,6 +156,9 @@ class GripperControl:
 
     def __init__(self, robot, open_width=.06, close_width=0., speed=.03, *, clock=time.monotonic):
         self.robot, self.clock = robot, clock
+        self.teaching_gripper_supported = robot.config.get("collection", {}).get("gripper_in_teaching_supported", False)
+        if not isinstance(self.teaching_gripper_supported, bool):
+            raise ValueError("collection.gripper_in_teaching_supported must be boolean")
         low, high = robot.settings["gripper_limits_m"]
         if (any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v)
                 for v in (open_width, close_width, speed)) or not low <= close_width < open_width <= high or speed <= 0):
@@ -170,10 +173,16 @@ class GripperControl:
         self.error = None
         self.events = deque(maxlen=200)
 
+    def _feedback(self):
+        feedback = self.robot.get_feedback()
+        if not self.robot.mock and feedback["ctrl_mode"] == 2 and not self.teaching_gripper_supported:
+            raise RuntimeError("实体示教下的软件夹爪未验证兼容，已禁止发送。退出实体示教并选择 CAN 后可测试 O/C。手拖抓取采集需兼容固件或改用遥操作。")
+        return feedback
+
     def request(self, opening):
         self.suspend()  # A rejected replacement must not leave an old ramp running.
         self.error = None
-        measured = self.robot.get_feedback()["state"][6]
+        measured = self._feedback()["state"][6]
         low, high = self.robot.settings["gripper_limits_m"]
         if (not math.isfinite(measured)
                 or not low - self.FEEDBACK_TOLERANCE_M <= measured <= high + self.FEEDBACK_TOLERANCE_M):
@@ -200,7 +209,7 @@ class GripperControl:
         period = 1 / self.robot.settings["control_hz"]
         if self.last_sent_at is not None and now - self.last_sent_at < period * .8:
             return
-        feedback = self.robot.get_feedback()
+        feedback = self._feedback()
         measured = feedback["state"][6]
         low, high = self.robot.settings["gripper_limits_m"]
         if (not math.isfinite(measured)
@@ -362,6 +371,8 @@ class TeachingSession:
                 return
             feedback = self.robot.get_feedback()
             if not self.robot.mock and feedback["ctrl_mode"] != 2:
+                if not self.gripper.teaching_gripper_supported:
+                    raise RuntimeError("当前 CAN 模式可测试 O/C，但本采集流程按手拖设计；软件夹爪不兼容实体示教时不能录制完整抓取。需改用遥操作采集或取得兼容固件，不要在 CAN 下直接手拖。")
                 raise RuntimeError("请先用实体按钮进入拖动示教，再开始手拖录制；程序不会自动切模式。")
             self.start_requested = True
             try:
@@ -408,8 +419,8 @@ class TeachingSession:
         warnings = list(self.device_errors)
         if self.gripper.error:
             warnings.append(self.gripper.error)
-        if feedback and feedback["ctrl_mode"] == 2 and not self.args.mock:
-            warnings.append("实体示教模式：O/C 是否有效取决于固件，发送成功不代表夹爪已执行；H 返回需先退出示教。")
+        if feedback and feedback["ctrl_mode"] == 2 and not self.robot.mock:
+            warnings.append("实体示教模式；当前固件不响应 O/C 时，不能用手拖完成键控夹爪抓取采集。H 返回需先退出示教。")
         if not self.robot.mock and not self.robot.settings["stop_strategy_verified"]:
             warnings.append("H 返回未启用：尚未现场验证停止策略。K 只保存姿态，不移动。")
         mode = None if feedback is None else feedback["ctrl_mode"]
@@ -432,7 +443,8 @@ class TeachingSession:
                                "home_file": str(self.args.home_file)}, camera_frame["images"])
 
     def poll(self, frame_index=None):
-        for command in self.dashboard.drain():
+        commands = self.dashboard.drain()
+        for command in commands:
             try:
                 self.handle(command)
             except (ValueError, RuntimeError, OSError, KeyError) as exc:
@@ -454,7 +466,8 @@ class TeachingSession:
             control_error = str(exc)
             self.start_requested = False
             self.gripper.fail(exc)
-            self.message = "控制已暂停，实时预览保留；详情见下方提示。"
+            if not commands:
+                self.message = "控制已暂停，实时预览保留；详情见下方提示。"
             if self.home_target is not None:
                 try:
                     self.robot.stop()

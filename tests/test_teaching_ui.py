@@ -345,6 +345,38 @@ class TeachingTests(unittest.TestCase):
         self.session.poll()
         self.assertEqual(self.backend.commands, before)
 
+    def test_unverified_real_teaching_blocks_gripper_and_record_but_can_allows_jaw(self):
+        self.robot.mock = False  # Synthetic transport, real-firmware UI policy.
+        self.dashboard.pending = ['open', 'record']
+        self.session.poll()
+        self.assertFalse(self.backend.commands)
+        self.assertIsNone(self.session.gripper.target)
+        self.assertFalse(self.session.start_requested)
+        self.assertIn('兼容', self.session.gripper.error)
+        self.backend.mode = 1
+        self.dashboard.pending = ['open']
+        self.session.poll()
+        self.assertEqual(self.backend.commands[0][0], 'gripper')
+        self.assertIsNone(self.session.gripper.error)
+        before = list(self.backend.commands)
+        self.dashboard.pending = ['record']
+        self.session.poll()
+        self.assertFalse(self.session.start_requested)
+        self.assertIn('遥操作', self.dashboard.state['message'])
+        self.assertEqual(self.backend.commands, before)
+
+    def test_entering_unverified_teaching_stops_active_can_gripper_ramp(self):
+        self.robot.mock = False
+        self.backend.mode = 1
+        self.session.poll()
+        before = list(self.backend.commands)
+        self.backend.mode = 2
+        self.clock.sleep(.05)
+        self.session.poll()
+        self.assertIsNone(self.session.gripper.target)
+        self.assertEqual(self.backend.commands, before)
+        self.assertIn('兼容', self.session.gripper.error)
+
 
 class DashboardTests(unittest.TestCase):
     def test_preview_intents_and_cross_origin_protection(self):
