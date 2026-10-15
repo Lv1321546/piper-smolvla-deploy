@@ -80,6 +80,50 @@ connect 不切换控制模式、不使能、不发送目标。相机时刻是 ca
 
 ## 3. 采集与导出
 
+腕上相机抓取任务可使用交互采集：
+
+    python -m e14.collect_data --config config.local.json --interactive --initialize-can \
+      --output data/piper_raw_pickdrop_v1 --episodes 50 --duration 30 \
+      --task "Pick up the black foam block and drop it onto the mouse pad."
+
+终端会打印本机预览地址（默认 http://127.0.0.1:8766），用浏览器打开。需要关闭之前的相机拍照程序，避免占用同一设备。
+交互模式会使能并逐步张开夹爪，六关节保持人工操作；它不是只读模式。按实体按钮进入可拖动示教后，手动摆到能看清方块与鼠标垫的初始视角。
+
+| 按键 | 操作 |
+|---|---|
+| O / C | 夹爪张开 / 闭合，目标平滑变化；页面显示实际宽度 |
+| K | 记录当前六关节作为初始姿态，并保存参考图片，不移动 |
+| H | 在录制外返回初始姿态，完成后张爪 |
+| R | 等待夹爪实际张开后开始录制，不自动移动到初始姿态 |
+| 空格 | 提前结束录制，进入结果标注；返回过程中则取消并调用配置的停止策略 |
+| S / F / U | 标注成功 / 失败 / 暂不标注；录制中按 S/F/U 会先结束再标注 |
+| Q | 退出采集；不会自动松爪，不能代替实体急停 |
+
+按键只在预览网页获得焦点时有效，也可以点击对应按钮。页面约 10 FPS 显示最新图像，原始采集仍按 robot.control_hz（默认 20 Hz）保存。
+实时图像读取和显示不依赖 opencv GUI，预览服务只监听本机回环地址。
+--duration 在交互模式中是每条的最长时间；手动结束仍保持均匀采样。没有标注上一条结果前不会开始下一条。
+每条开始前人工确认视野；可以适度改变初始姿态，程序不要求与 K 记录的角度完全相同。
+
+初始姿态默认保存在 outputs/teaching_home.json，参考图片位于同目录 teaching_home-front.png。
+可用 --home-file 指定其他任务的初始姿态。H 使用原有运动检查：实机须先人工退出示教、完成停止策略验收后配置 robot.stop_strategy_verified=true；不会发送复位或强制退出按键示教。
+H 返回后关节处于位置控制，需要重新按实体按钮进入拖动示教再录下一条。录制期间禁止返回。
+这些六关节运动只由 H 触发；启动、R、O、C 不发送六关节运动目标。
+初始姿态不是避障规划，返回路径必须在实际空旷工作区核对。
+
+夹爪参数默认 --open-width 0.06 --close-width 0 --gripper-speed 0.03（完整开口米、米/秒）；力矩沿用 robot.gripper_effort（SDK 单位，默认示例 500）。
+robot.enable_gripper 控制策略执行的夹爪动作，不禁用用户显式选择的交互夹爪控制。
+SDK 可以发送独立 GripperCtrl，但部分固件在实体按钮示教模式下可能忽略它。开口反馈不到位时不会开始录制；界面会提示检查，而不是自动切 CAN、复位或清错。
+先在空夹爪下验证 O/C 和实际开口变化，再采抓取数据；闭合目标不是“抓取成功”的自动判定。
+
+原始目录仍使用 manifest.json、frames.jsonl、images/front/*.png；交互模式额外写 events.jsonl 保存按键和夹爪目标，operator_session 保存初始关节状态。
+训练标签仍是下一帧真实反馈，events.jsonl 不会替代标签。录制结束及退出时不会自动开爪，防止持物时意外掉落。
+
+不连接实机的交互练习：
+
+    python -m e14.collect_data --config config.mock.json --mock --interactive \
+      --output data/mock_interactive --episodes 2 --duration 10 \
+      --task "Pick up the black foam block and drop it onto the mouse pad."
+
 先用模拟数据学习流程：
 
     python -m e14.collect_data --config config.mock.json --mock \
@@ -93,7 +137,7 @@ connect 不切换控制模式、不使能、不发送目标。相机时刻是 ca
 导出：
 
     python -m e14.export_dataset --raw-root data/mock_raw \
-      --output-root data/mock_dataset --repo-id local/piper_mock
+      --output data/mock_dataset --repo-id local/piper_mock
 
 只有 complete 且成功的演示默认纳入，unknown 需 --include-unknown 明确放行；失败演示不会自动当成功训练数据。
 图像先用 PNG / LeRobot 嵌入图像，避免视频编码依赖。后续需要大规模视频存储时再扩展。
@@ -103,6 +147,9 @@ connect 不切换控制模式、不使能、不发送目标。相机时刻是 ca
 缺帧、重复反馈、重复相机帧或不均匀采样会被拒绝，不会偷偷补成恒定频率。
 输出包含 split.json、train_stats.json、deployment_schema.json、export_manifest.json；训练/验证按 episode 划分，统计量只取训练集。
 模拟数据带 mock 标记，只用于验证数据管线，不会生成可执行的真实 PiPER 模型。
+
+上面的模拟导出目录是 `data/mock_dataset`，只用于本地流程验证，暂时不需要上传服务器。
+下面的 `data/piper_dataset` 指后续真实数据导出时选用的目录；必须先生成该目录，不能直接接在模拟采集命令之后执行。
 
 真实导出数据上传 NAS（从 E14 发起，目录必须是自己的）：
 

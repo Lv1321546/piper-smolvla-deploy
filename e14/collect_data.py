@@ -1,4 +1,4 @@
-"""Read-only timestamped PiPER demonstrations. Never enable or command motors.
+"""Timestamped PiPER demonstrations; read-only unless --interactive is selected.
 
 Actions are not invented here: export_dataset labels observation[t] with the next
 observed state, explicitly marked next_state rather than recorded commands.
@@ -85,7 +85,8 @@ def validate_sample(observation: dict, camera_frame: dict, config: dict, setting
 
 def record_episode(robot, cameras, output: str | Path, task: str, config: dict, duration: float,
                    *, mock: bool = False, outcome: str = "unknown", clock: Callable = time.monotonic,
-                   sleep: Callable = time.sleep) -> dict:
+                   sleep: Callable = time.sleep, before_sample: Callable | None = None,
+                   metadata: dict | None = None) -> dict:
     """Fail on missed ticks rather than omit frames. Completion is not task success."""
     settings = collection_settings(config)
     if not task.strip() or not math.isfinite(duration) or duration <= 0:
@@ -104,11 +105,13 @@ def record_episode(robot, cameras, output: str | Path, task: str, config: dict, 
         "created_unix_s": time.time(), "started_monotonic": started,
         "state_names": ACTION_NAMES, "joint_unit": "degree", "gripper_unit": "meter_full_opening",
         "action_mode": "absolute_position", "label_semantics": "next_state",
-        "label_note": "No commands recorded; export pairs observation[t] with observed state[t+1].",
+        "label_note": "Export pairs observation[t] with observed state[t+1]; optional operator commands are audit events, not labels.",
         "cameras": {name: {"width": c["width"], "height": c["height"], "color": "RGB",
                              "max_age_ms": c.get("max_age_ms", settings["feedback_max_age_ms"])}
                     for name, c in config["cameras"].items()}, **settings,
     }
+    if metadata:
+        manifest["operator_session"] = metadata
     write_json(output / "manifest.json", manifest)
     previous = None
     previous_feedback = None
@@ -120,6 +123,11 @@ def record_episode(robot, cameras, output: str | Path, task: str, config: dict, 
                 remaining = deadline - clock()
                 if remaining > 0:
                     sleep(remaining)
+                if before_sample is not None and before_sample(index) is False:
+                    if manifest["frames"] < 2:
+                        raise RuntimeError("Recording ended before two samples; episode is not exportable")
+                    manifest["stop_reason"] = "operator"
+                    break
                 if clock() - deadline > period * settings["max_period_error_ratio"]:
                     raise RuntimeError(f"Missed collection deadline at frame {index}; no ticks skipped")
                 observation, camera_frame = robot.get_observation(), cameras.read()
@@ -146,7 +154,9 @@ def record_episode(robot, cameras, output: str | Path, task: str, config: dict, 
                 stream.write(json.dumps(sample, allow_nan=False) + "\n")
                 stream.flush()
                 manifest["frames"] = index + 1
-        manifest.update(status="complete", finished_monotonic=clock())
+        # A deliberate operator stop changes length, never the uniform timestamps.
+        manifest.update(status="complete", expected_frames=manifest["frames"],
+                        stop_reason=manifest.get("stop_reason", "duration_limit"), finished_monotonic=clock())
         write_json(output / "manifest.json", manifest)
         return manifest
     except BaseException as exc:
@@ -166,9 +176,23 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--outcome", choices=["unknown", "success", "failure"], default="unknown",
                         help="Explicit operator task outcome, independent of recording completeness")
     parser.add_argument("--mock", action="store_true")
+    parser.add_argument("--interactive", action="store_true", help="Local live preview, keyboard gripper, start/stop and outcome buttons")
+    parser.add_argument("--initialize-can", action="store_true")
+    parser.add_argument("--restart-can", action="store_true")
+    parser.add_argument("--preview-port", type=int, default=8766)
+    parser.add_argument("--home-file", type=Path, default=Path("outputs/teaching_home.json"))
+    parser.add_argument("--open-width", type=float, default=.06, help="Full gripper opening in metres")
+    parser.add_argument("--close-width", type=float, default=0., help="Closed gripper target in metres")
+    parser.add_argument("--gripper-speed", type=float, default=.03, help="Manual target ramp, metres per second")
     args = parser.parse_args(argv)
     if args.episodes < 1:
         parser.error("--episodes must be positive")
+    if args.restart_can and not args.initialize_can:
+        parser.error("--restart-can requires --initialize-can")
+    if args.interactive:
+        from e14.teaching_ui import run_interactive
+        run_interactive(args)
+        return
     config = json.loads(args.config.read_text())
     collection_settings(config)
     from e14.piper_robot import PiperRobot
@@ -176,7 +200,7 @@ def main(argv: list[str] | None = None) -> None:
     robot, cameras = PiperRobot(config, mock=args.mock), CameraReader(config["cameras"], mock=args.mock)
     args.output.mkdir(parents=True, exist_ok=True)
     try:
-        robot.connect()
+        robot.connect(initialize_can=args.initialize_can, restart_can=args.restart_can)
         cameras.connect()
         existing = [int(p.name.split("_")[1]) for p in args.output.glob("episode_[0-9]*") if p.is_dir()]
         offset = max(existing, default=-1) + 1

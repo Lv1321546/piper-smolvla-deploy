@@ -449,6 +449,37 @@ class PiperRobot(_Robot):
     def get_lerobot_observation(self):
         return dict(zip(ACTION_NAMES, self.get_observation()["state"]))
 
+    def get_feedback(self):
+        """Fresh feedback for the operator UI; reading never commands an actuator."""
+        return self._snapshot()
+
+    def command_gripper(self, width, *, effort=None):
+        """Explicit manual gripper command, independent of six-joint control.
+
+        Does not select CAN mode, enable arm joints, reset, clear faults or set
+        zero. Some firmware ignores gripper commands in button teaching mode;
+        callers must check measured opening rather than assume acceptance.
+        ``enable_gripper`` applies to policy execution, not this explicit API.
+        """
+        with self._command_lock:
+            width = _number(width, "gripper width")
+            low, high = self.settings["gripper_limits_m"]
+            if not low <= width <= high:
+                raise ValueError(f"Gripper width {width} outside [{low},{high}] metres")
+            effort = self.settings["gripper_effort"] if effort is None else effort
+            if isinstance(effort, bool) or not isinstance(effort, int) or not 0 < effort <= 5000:
+                raise ValueError("Manual gripper effort must be integer SDK units 1..5000")
+            snap = self._snapshot()
+            if (snap["ctrl_mode"] not in (1, 2) or snap["arm_status"] not in (0, 0x0B)
+                    or snap["err_code"] or any(snap["motor_faults"]) or snap["gripper_faults"]):
+                raise RuntimeError("Manual gripper needs healthy CAN/teaching feedback; no mode switch is sent")
+            raw = round(width * 1_000_000)
+            if not low <= raw / 1_000_000 <= high:
+                raise ValueError("Rounded gripper command exceeds configured limits")
+            self._backend.gripper(raw, effort)
+            return {"commanded_width_m": raw / 1_000_000, "effort_sdk": effort,
+                    "command_monotonic": self._clock(), "feedback_before_m": snap["state"][6]}
+
     def prepare_control(self):
         """Select CAN/MOVE_J and enable, never reset or send a joint movement goal.
 
