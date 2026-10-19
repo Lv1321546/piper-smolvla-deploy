@@ -31,7 +31,7 @@ PAGE = r'''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>PiPER 
 <button data-c="success">S / Y 成功</button><button data-c="failure">F / Back 失败</button>
 <button data-c="unknown">U 暂不标注</button><button data-c="save_home">K 保存参考姿态</button>
 <button data-c="quit">Q 退出</button>
-<p>末端模式：左摇杆前后 X / 左右 Y，右摇杆上下 Z。默认保持起始姿态；旋转需显式配置。关节模式：两摇杆与方向键控制六关节。</p>
+<p>末端模式：左摇杆前后 X / 左右 Y，右摇杆上下 Z。右摇杆左右 → Yaw；方向键上下 → Pitch，左右 → Roll。旋转绕基座 X/Y/Z 轴；均须持续按住 LB/L1。关节模式：两摇杆与方向键控制六关节。</p>
 <details><summary>输入与运行详情</summary><pre id="debug"></pre></details></section></main>
 <script>const token=__TOKEN__;
 async function cmd(command){try{let r=await fetch('/command',{method:'POST',headers:{'Content-Type':'application/json','X-Teaching-Token':token},body:JSON.stringify({command})});if(!r.ok)throw Error(await r.text())}catch(e){document.querySelector('#message').textContent=e.message}}
@@ -42,7 +42,7 @@ async function refresh(){try{let s=await(await fetch('/state',{cache:'no-store'}
 document.querySelector('#badge').textContent=(s.mock?'模拟设备':s.teleop_execute?'实机执行':'只读预览')+' · '+s.status_label;
 document.querySelector('#message').textContent=s.message;
 document.querySelector('#warning').textContent=(s.warnings??[]).join('\n');
-document.querySelector('#pad').textContent=['手柄：'+(g.name??'等待连接'),'控制模式：'+(s.teleop_mode??''),'LB：'+(s.deadman_active?'允许移动':'未激活'),'控制状态：'+(s.teleop_message??'')].join('\n');
+document.querySelector('#pad').textContent=['手柄：'+(g.name??'等待连接'),'控制模式：'+(s.teleop_mode??''),'LB：'+(s.deadman_active?'允许移动':'未激活'),'平移速度：'+((s.teleop_linear_speed_m_s??0)*1000).toFixed(0)+' mm/s；Y '+(s.teleop_invert_y?'反向':'正向'),'旋转：'+(s.teleop_rotation_enabled?((s.teleop_angular_speed_rad_s??0)*180/Math.PI).toFixed(1)+' °/s':'关闭'),'控制状态：'+(s.teleop_message??'')].join('\n');
 document.querySelector('#stats').textContent=['实际关节：'+(s.joint_angles_deg??[]).map(v=>v.toFixed(2)).join(', ')+' °','实际开口：'+(s.gripper_width_mm??'无新反馈')+' mm','最近记录：'+(s.recorded_frames??0)+' 帧','已标注：'+(s.saved_episodes??0)+' 条',s.episode??''].join('\n');
 document.querySelector('#debug').textContent=JSON.stringify(s,null,2)}catch(e){document.querySelector('#message').textContent='程序连接已断开，请检查终端。'}setTimeout(refresh,250)}refresh();</script></html>'''
 
@@ -107,6 +107,10 @@ class GamepadSession(TeachingSession):
             state['warnings'].append(self.core.message)
         state.update(gamepad=asdict(self.pad_state) if self.pad_state else {},
                      teleop_mode=self.args.mode, teleop_execute=self.core.execute,
+                     teleop_linear_speed_m_s=self.core.linear_speed,
+                     teleop_angular_speed_rad_s=self.core.angular_speed,
+                     teleop_rotation_enabled=self.core.allow_rotation,
+                     teleop_invert_y=self.core.invert_y,
                      deadman_active=self.core.active, teleop_message=self.core.message,
                      proposed_action=self.core.last_proposal)
         self.dashboard.update(state, (self.camera_frame or {}).get('images',{}))

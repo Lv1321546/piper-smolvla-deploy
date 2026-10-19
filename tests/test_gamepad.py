@@ -216,6 +216,65 @@ class GamepadTests(unittest.TestCase):
         self.assertTrue(event['execute'])
         self.assertFalse(any(c[0] in {'mode','enable','gripper'} for c in self.backend.commands))
 
+    def test_left_stick_right_now_moves_toward_negative_y(self):
+        self.activate()
+        before=self.core.kin.forward(np.radians(self.backend.state[:6]))
+        self.advance(lb=True,left_x=.5)
+        after=self.core.kin.forward(np.radians(self.backend.state[:6]))
+        self.assertLess(after[1,3],before[1,3]-.0001)
+        np.testing.assert_allclose(after[[0,2],3],before[[0,2],3],atol=2e-5)
+
+    def test_cartesian_cruise_speed_is_four_centimetres_per_second(self):
+        self.assertAlmostEqual(self.core.linear_speed,.04)
+        self.activate()
+        for _ in range(12):self.advance(lb=True,left_y=-1.)
+        before=self.core.kin.forward(np.radians(self.backend.state[:6]))
+        self.advance(lb=True,left_y=-1.)
+        after=self.core.kin.forward(np.radians(self.backend.state[:6]))
+        self.assertAlmostEqual((after[0,3]-before[0,3])/.05,.04,delta=.001)
+
+    def assert_rotation_input(self, expected_axis, *, hat=(0,0), **axes):
+        self.activate()
+        before=self.core.kin.forward(np.radians(self.backend.state[:6]))
+        state=self.state(lb=True,**axes);state.hat=hat
+        self.clock.sleep(.05);self.core.tick(state)
+        after=self.core.kin.forward(np.radians(self.backend.state[:6]))
+        dr=after[:3,:3]@before[:3,:3].T
+        angular=np.array([dr[2,1]-dr[1,2],dr[0,2]-dr[2,0],dr[1,0]-dr[0,1]])/2
+        self.assertGreater(angular[expected_axis],.0008)
+        np.testing.assert_allclose(np.delete(angular,expected_axis),0,atol=6e-5)
+        np.testing.assert_allclose(after[:3,3],before[:3,3],atol=2e-5)
+
+    def test_right_stick_horizontal_controls_yaw(self):
+        self.assert_rotation_input(2,right_x=1.)
+
+    def test_dpad_up_controls_pitch(self):
+        self.assert_rotation_input(1,hat=(0,1))
+
+    def test_dpad_right_controls_roll(self):
+        self.assert_rotation_input(0,hat=(1,0))
+
+    def test_rotation_can_still_be_disabled_in_config(self):
+        self.core=GamepadControl(self.robot,{'allow_rotation':False},execute=True,clock=self.clock)
+        self.activate()
+        state=self.state(lb=True,right_x=1.);state.hat=(1,1)
+        self.clock.sleep(.05);self.core.tick(state)
+        self.assertFalse(self.backend.commands)
+
+    def test_rotation_reduces_cartesian_step_to_keep_joint_motion_bounded(self):
+        self.core=GamepadControl(self.robot,{'angular_speed_rad_s':.4},execute=True,clock=self.clock)
+        self.activate()
+        start=self.core.kin.forward(np.radians(self.backend.state[:6]))
+        emitted=0
+        for _ in range(15):
+            before=list(self.backend.state[:6])
+            if self.advance(lb=True,right_x=1.) is not None:emitted+=1
+            self.assertTrue(all(abs(a-b)<=.751 for a,b in zip(before,self.backend.state[:6])))
+        end=self.core.kin.forward(np.radians(self.backend.state[:6]))
+        self.assertEqual(emitted,15)
+        np.testing.assert_allclose(end[:3,3],start[:3,3],atol=1e-4)
+        self.assertFalse(self.core.faulted)
+
     def test_joint_mode_preserves_other_joints(self):
         self.core.mode='joint';self.activate()
         before=self.robot.get_feedback()['state']

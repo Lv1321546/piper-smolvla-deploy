@@ -10,16 +10,18 @@ class GamepadControl:
     def __init__(self, robot, settings=None, *, execute=False, mode='cartesian', clock=time.monotonic, kinematics=None):
         self.robot, self.clock, self.execute, self.mode = robot, clock, execute, mode
         s = settings or {}
-        self.linear_speed = s.get('linear_speed_m_s', .02)
+        self.linear_speed = s.get('linear_speed_m_s', .04)
         self.angular_speed = s.get('angular_speed_rad_s', .15)
         self.joint_speed = s.get('joint_speed_deg_s', 8.)
         self.grip_speed = s.get('gripper_speed_m_s', .02)
         self.radius = s.get('workspace_radius_m', .15)
-        self.allow_rotation = s.get('allow_rotation', False)
+        self.allow_rotation = s.get('allow_rotation', True)
+        self.invert_y = s.get('invert_y', True)
         for v in (self.linear_speed,self.angular_speed,self.joint_speed,self.grip_speed,self.radius):
             if isinstance(v,bool) or not isinstance(v,(int,float)) or not math.isfinite(v) or v<=0:
                 raise ValueError('Positive finite gamepad speeds/workspace radius required')
-        if not isinstance(self.allow_rotation,bool) or mode not in {'cartesian','joint'}:
+        if (not isinstance(self.allow_rotation,bool) or not isinstance(self.invert_y,bool)
+                or mode not in {'cartesian','joint'}):
             raise ValueError('Invalid gamepad control mode/rotation setting')
         if kinematics is not None and not robot.mock:
             raise ValueError('Preview-model kinematics is restricted to the mock robot')
@@ -124,21 +126,30 @@ class GamepadControl:
             self.velocity += np.clip(demand-self.velocity,-30*dt,30*dt)
             target = np.degrees(np.clip(q+np.radians(np.clip(self.velocity*dt,-limits,limits)),self.kin.low,self.kin.high))
         else:
-            demand = np.r_[np.array([-axes['left_y'],axes['left_x'],-axes['right_y']])*self.linear_speed,
-                           np.array([pad.hat[1],pad.hat[0],axes['right_x']])*self.angular_speed]*fine
+            y_sign = -1 if self.invert_y else 1
+            demand = np.r_[np.array([-axes['left_y'],y_sign*axes['left_x'],-axes['right_y']])*self.linear_speed,
+                           np.array([pad.hat[0],pad.hat[1],axes['right_x']])*self.angular_speed]*fine
             if not self.allow_rotation:
                 demand[3:] = 0
             accel = np.array([.1,.1,.1,.5,.5,.5])
             self.velocity += np.clip(demand-self.velocity,-accel*dt,accel*dt)
             position = pose[:3,3]+self.velocity[:3]*dt
-            angular = self.velocity[3:]*dt
-            next_orientation = self.orientation.copy()
-            if np.linalg.norm(angular)>1e-12:
-                next_orientation = rotation(angular,np.linalg.norm(angular)) @ next_orientation
             if np.max(np.abs(position-self.origin))>self.radius:
                 self._hold(); self.message='到达相对工作区边界；请反向移动。'
                 return None
-            answer = self.kin.inverse(position,next_orientation,q,np.radians(limits))
+            # A valid Cartesian increment can still require more than the
+            # permitted joint step. Reduce the increment rather than alternating
+            # between a full-speed goal and a hold during coupled rotations.
+            answer = None
+            for motion_scale in (1., .5, .25, .125):
+                position = pose[:3,3]+self.velocity[:3]*dt*motion_scale
+                angular = self.velocity[3:]*dt*motion_scale
+                next_orientation = self.orientation.copy()
+                if np.linalg.norm(angular)>1e-12:
+                    next_orientation = rotation(angular,np.linalg.norm(angular)) @ next_orientation
+                answer = self.kin.inverse(position,next_orientation,q,np.radians(limits))
+                if answer is not None:
+                    break
             if answer is None:
                 self._hold(); self.message='局部逆解未收敛，保持当前位置；尝试反向移动或关节模式。'
                 self.velocity[:] = 0
