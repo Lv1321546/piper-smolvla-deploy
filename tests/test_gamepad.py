@@ -233,7 +233,7 @@ class GamepadTests(unittest.TestCase):
         after=self.core.kin.forward(np.radians(self.backend.state[:6]))
         self.assertAlmostEqual((after[0,3]-before[0,3])/.05,.04,delta=.001)
 
-    def assert_rotation_input(self, expected_axis, *, hat=(0,0), **axes):
+    def assert_rotation_input(self, expected_axis, *, hat=(0,0), direction=1, **axes):
         self.activate()
         before=self.core.kin.forward(np.radians(self.backend.state[:6]))
         state=self.state(lb=True,**axes);state.hat=hat
@@ -241,7 +241,7 @@ class GamepadTests(unittest.TestCase):
         after=self.core.kin.forward(np.radians(self.backend.state[:6]))
         dr=after[:3,:3]@before[:3,:3].T
         angular=np.array([dr[2,1]-dr[1,2],dr[0,2]-dr[2,0],dr[1,0]-dr[0,1]])/2
-        self.assertGreater(angular[expected_axis],.0008)
+        self.assertGreater(direction*angular[expected_axis],.0008)
         np.testing.assert_allclose(np.delete(angular,expected_axis),0,atol=6e-5)
         np.testing.assert_allclose(after[:3,3],before[:3,3],atol=2e-5)
 
@@ -249,7 +249,10 @@ class GamepadTests(unittest.TestCase):
         self.assert_rotation_input(2,right_x=1.)
 
     def test_dpad_up_controls_pitch(self):
-        self.assert_rotation_input(1,hat=(0,1))
+        self.assert_rotation_input(1,hat=(0,1),direction=-1)
+
+    def test_dpad_down_controls_positive_pitch(self):
+        self.assert_rotation_input(1,hat=(0,-1))
 
     def test_dpad_right_controls_roll(self):
         self.assert_rotation_input(0,hat=(1,0))

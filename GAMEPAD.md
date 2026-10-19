@@ -74,7 +74,7 @@ python -m e14.gamepad_teleop --config config.mock.json \
 | 左摇杆前后 / 左右 | 末端模式 X / Y；Y 已反向（向右拨对应 -Y），以当前控制模型的基座系为准 |
 | 右摇杆上下 | 末端模式 Z 升降 |
 | 右摇杆左右 | 末端 Yaw，绕基座 Z 轴；向右为正 |
-| 方向键上下 | 末端 Pitch，绕基座 Y 轴；向上为正 |
+| 方向键上下 | 末端 Pitch，绕基座 Y 轴；已反向：向上为负、向下为正 |
 | 方向键左右 | 末端 Roll，绕基座 X 轴；向右为正 |
 | LT / RT | 夹爪逐步闭合 / 张开 |
 | A / B | 闭合 / 张开的替代按钮 |
@@ -92,7 +92,7 @@ python -m e14.gamepad_teleop --config config.mock.json \
 
 `--mode joint` 调六关节：左摇杆左右→J1、上下→J2，右摇杆上下→J3，方向键左右→J4、上下→J5，右摇杆左右→J6。默认速度 8°/s，最大单步和跟踪差沿用 robot 配置。
 
-本机配置和示例已设置 `gamepad.allow_rotation=true`、`gamepad.invert_y=true`。设 allow_rotation=false 可禁用旋转，设 invert_y=false 可恢复旧 Y 方向；invert_y 仅影响末端模式的 Y，不改变关节模式 J1。所有旋转均为基座系 X/Y/Z 轴的增量，不是工具自身局部坐标轴。启动前可在 gamepad.local.json 调整 linear_speed_m_s / angular_speed_rad_s。修改后重启程序生效，网页会显示当前数值。
+本机配置和示例已设置 `gamepad.allow_rotation=true`、`gamepad.invert_y=true`。`gamepad.invert_pitch=true` 将方向键上下的 Pitch 反向，设为 false 可恢复旧方向；不改变关节模式。设 allow_rotation=false 可禁用旋转，设 invert_y=false 可恢复旧 Y 方向；invert_y 仅影响末端模式的 Y，不改变关节模式 J1。所有旋转均为基座系 X/Y/Z 轴的增量，不是工具自身局部坐标轴。启动前可在 gamepad.local.json 调整 linear_speed_m_s / angular_speed_rad_s。修改后重启程序生效，网页会显示当前数值。
 
 ## 实机入口与当前边界
 

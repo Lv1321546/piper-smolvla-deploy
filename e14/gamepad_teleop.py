@@ -42,7 +42,7 @@ async function refresh(){try{let s=await(await fetch('/state',{cache:'no-store'}
 document.querySelector('#badge').textContent=(s.mock?'模拟设备':s.teleop_execute?'实机执行':'只读预览')+' · '+s.status_label;
 document.querySelector('#message').textContent=s.message;
 document.querySelector('#warning').textContent=(s.warnings??[]).join('\n');
-document.querySelector('#pad').textContent=['手柄：'+(g.name??'等待连接'),'控制模式：'+(s.teleop_mode??''),'LB：'+(s.deadman_active?'允许移动':'未激活'),'平移速度：'+((s.teleop_linear_speed_m_s??0)*1000).toFixed(0)+' mm/s；Y '+(s.teleop_invert_y?'反向':'正向'),'旋转：'+(s.teleop_rotation_enabled?((s.teleop_angular_speed_rad_s??0)*180/Math.PI).toFixed(1)+' °/s':'关闭'),'控制状态：'+(s.teleop_message??'')].join('\n');
+document.querySelector('#pad').textContent=['手柄：'+(g.name??'等待连接'),'控制模式：'+(s.teleop_mode??''),'LB：'+(s.deadman_active?'允许移动':'未激活'),'平移速度：'+((s.teleop_linear_speed_m_s??0)*1000).toFixed(0)+' mm/s；Y '+(s.teleop_invert_y?'反向':'正向'),'旋转：'+(s.teleop_rotation_enabled?((s.teleop_angular_speed_rad_s??0)*180/Math.PI).toFixed(1)+' °/s':'关闭'),'Pitch 上下：'+(s.teleop_invert_pitch?'已反向':'正向'),'控制状态：'+(s.teleop_message??'')].join('\n');
 document.querySelector('#stats').textContent=['实际关节：'+(s.joint_angles_deg??[]).map(v=>v.toFixed(2)).join(', ')+' °','实际开口：'+(s.gripper_width_mm??'无新反馈')+' mm','最近记录：'+(s.recorded_frames??0)+' 帧','已标注：'+(s.saved_episodes??0)+' 条',s.episode??''].join('\n');
 document.querySelector('#debug').textContent=JSON.stringify(s,null,2)}catch(e){document.querySelector('#message').textContent='程序连接已断开，请检查终端。'}setTimeout(refresh,250)}refresh();</script></html>'''
 
@@ -111,6 +111,7 @@ class GamepadSession(TeachingSession):
                      teleop_angular_speed_rad_s=self.core.angular_speed,
                      teleop_rotation_enabled=self.core.allow_rotation,
                      teleop_invert_y=self.core.invert_y,
+                     teleop_invert_pitch=self.core.invert_pitch,
                      deadman_active=self.core.active, teleop_message=self.core.message,
                      proposed_action=self.core.last_proposal)
         self.dashboard.update(state, (self.camera_frame or {}).get('images',{}))

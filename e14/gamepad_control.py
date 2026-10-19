@@ -17,10 +17,12 @@ class GamepadControl:
         self.radius = s.get('workspace_radius_m', .15)
         self.allow_rotation = s.get('allow_rotation', True)
         self.invert_y = s.get('invert_y', True)
+        self.invert_pitch = s.get('invert_pitch', True)
         for v in (self.linear_speed,self.angular_speed,self.joint_speed,self.grip_speed,self.radius):
             if isinstance(v,bool) or not isinstance(v,(int,float)) or not math.isfinite(v) or v<=0:
                 raise ValueError('Positive finite gamepad speeds/workspace radius required')
         if (not isinstance(self.allow_rotation,bool) or not isinstance(self.invert_y,bool)
+                or not isinstance(self.invert_pitch,bool)
                 or mode not in {'cartesian','joint'}):
             raise ValueError('Invalid gamepad control mode/rotation setting')
         if kinematics is not None and not robot.mock:
@@ -127,8 +129,9 @@ class GamepadControl:
             target = np.degrees(np.clip(q+np.radians(np.clip(self.velocity*dt,-limits,limits)),self.kin.low,self.kin.high))
         else:
             y_sign = -1 if self.invert_y else 1
+            pitch_sign = -1 if self.invert_pitch else 1
             demand = np.r_[np.array([-axes['left_y'],y_sign*axes['left_x'],-axes['right_y']])*self.linear_speed,
-                           np.array([pad.hat[0],pad.hat[1],axes['right_x']])*self.angular_speed]*fine
+                           np.array([pad.hat[0],pitch_sign*pad.hat[1],axes['right_x']])*self.angular_speed]*fine
             if not self.allow_rotation:
                 demand[3:] = 0
             accel = np.array([.1,.1,.1,.5,.5,.5])

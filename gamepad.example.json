@@ -29,6 +29,7 @@
     "joint_speed_deg_s": 8,
     "workspace_radius_m": 0.15,
     "allow_rotation": true,
-    "invert_y": true
+    "invert_y": true,
+    "invert_pitch": true
   }
 }
