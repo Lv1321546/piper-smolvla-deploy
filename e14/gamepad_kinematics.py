@@ -91,7 +91,9 @@ class PiperKinematics:
             scale = .5 if angle<1e-6 else angle/(2*math.sin(angle))
             angular = scale*np.array([dr[2,1]-dr[1,2],dr[0,2]-dr[2,0],dr[1,0]-dr[0,1]])
             error = np.r_[position-pose[:3,3],angular]
-            if np.linalg.norm(error[:3]) < 8e-5 and np.linalg.norm(error[3:]) < 1e-3:
+            # Fine-speed teleop can request less than 80 micrometres per tick.
+            # A coarse convergence threshold would discard every such request.
+            if np.linalg.norm(error[:3]) < 5e-6 and np.linalg.norm(error[3:]) < 5e-5:
                 return q
             weights = np.array([1.,1.,1.,.2,.2,.2])
             a, b = weights[:,None]*j, weights*error

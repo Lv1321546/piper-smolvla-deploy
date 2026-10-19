@@ -1,5 +1,6 @@
 """Synthetic gamepad/CAN tests. No real controller or robot is accessed."""
 import copy
+import io
 import json
 from pathlib import Path
 import tempfile
@@ -19,6 +20,32 @@ from e14.piper_robot import PiperRobot, MockBackend
 from tests.test_teaching_ui import Clock, FakeDashboard
 
 ROOT=Path(__file__).resolve().parents[1]
+
+
+class ModelInstallerTests(unittest.TestCase):
+    def test_cached_install_verifies_assets_and_does_not_download_again(self):
+        from e14.install_mujoco_model import install,FILES
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            with patch('e14.install_mujoco_model.urllib.request.urlopen',
+                       side_effect=lambda url,timeout:io.BytesIO(url.encode())) as fetch:
+                scene=install(root)
+                self.assertTrue(scene.is_file())
+                self.assertEqual(fetch.call_count,len(FILES))
+                fetch.reset_mock();self.assertEqual(install(root),scene)
+                fetch.assert_not_called()
+                (root/'LICENSE').write_text('modified')
+                with self.assertRaisesRegex(ValueError,'changed'):install(root)
+                fetch.assert_not_called()
+
+    def test_install_does_not_overwrite_a_different_existing_asset(self):
+        from e14.install_mujoco_model import install
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);(root/'LICENSE').write_text('existing license')
+            with patch('e14.install_mujoco_model.urllib.request.urlopen',
+                       side_effect=lambda url,timeout:io.BytesIO(url.encode())):
+                with self.assertRaises(FileExistsError):install(root)
+            self.assertEqual((root/'LICENSE').read_text(),'existing license')
 
 
 class JoystickAdapterTests(unittest.TestCase):
@@ -106,6 +133,22 @@ class KinematicsTests(unittest.TestCase):
         mirror.update(np.r_[np.degrees(self.q),.02])
         self.assertGreater(np.linalg.norm(before-mirror.data.body('link7').xpos),.01)
 
+    def test_preview_model_jacobian_matches_finite_differences(self):
+        from e14.gamepad_sim import MujocoMirror
+        mirror=MujocoMirror(headless=True)
+        self.addCleanup(mirror.close)
+        limits=np.degrees(np.c_[self.kin.low,self.kin.high])
+        kin=mirror.kinematics(limits)
+        pose,j=kin.forward(self.q,jacobian=True)
+        np.testing.assert_allclose(pose,self.kin.forward(self.q),atol=1e-12)
+        for i in range(6):
+            q=self.q.copy();q[i]+=1e-6
+            other=kin.forward(q)
+            np.testing.assert_allclose((other[:3,3]-pose[:3,3])/1e-6,j[:3,i],atol=1e-6)
+        result=kin.inverse(pose[:3,3]+[.0005,0,0],pose[:3,:3],self.q,np.ones(6)*.01)
+        self.assertIsNotNone(result)
+        np.testing.assert_allclose(kin.forward(result)[:3,3],pose[:3,3]+[.0005,0,0],atol=8e-5)
+
 
 class GamepadTests(unittest.TestCase):
     def setUp(self):
@@ -181,6 +224,15 @@ class GamepadTests(unittest.TestCase):
         self.assertGreater(after[0],before[0])
         self.assertEqual(after[1:],before[1:])
 
+    def test_fine_speed_does_not_discard_small_stick_motion(self):
+        self.activate()
+        before=self.core.kin.forward(np.radians(self.backend.state[:6]))
+        state=self.state(lb=True,left_y=-.2);state.buttons['rb']=True
+        self.clock.sleep(.05);self.core.tick(state)
+        after=self.core.kin.forward(np.radians(self.backend.state[:6]))
+        self.assertGreater(after[0,3]-before[0,3],.00002)
+        self.assertTrue(any(c[0]=='joint' for c in self.backend.commands))
+
     def test_read_only_preview_never_sends_even_gripper_commands(self):
         self.core.execute=False
         self.activate()
@@ -246,6 +298,11 @@ class GamepadTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'stop_strategy_verified'):
             self.robot.prepare_control(joint_only=True)
         self.assertFalse(self.backend.commands)
+
+    def test_preview_kinematics_cannot_replace_real_control_kinematics(self):
+        self.robot.mock=False
+        with self.assertRaisesRegex(ValueError,'mock'):
+            GamepadControl(self.robot,kinematics=self.core.kin)
 
     def make_session(self):
         class Pad:

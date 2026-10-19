@@ -7,7 +7,7 @@ from e14.gamepad_kinematics import PiperKinematics, rotation
 
 
 class GamepadControl:
-    def __init__(self, robot, settings=None, *, execute=False, mode='cartesian', clock=time.monotonic):
+    def __init__(self, robot, settings=None, *, execute=False, mode='cartesian', clock=time.monotonic, kinematics=None):
         self.robot, self.clock, self.execute, self.mode = robot, clock, execute, mode
         s = settings or {}
         self.linear_speed = s.get('linear_speed_m_s', .02)
@@ -21,7 +21,9 @@ class GamepadControl:
                 raise ValueError('Positive finite gamepad speeds/workspace radius required')
         if not isinstance(self.allow_rotation,bool) or mode not in {'cartesian','joint'}:
             raise ValueError('Invalid gamepad control mode/rotation setting')
-        self.kin = PiperKinematics(robot.settings['joint_limits_deg'])
+        if kinematics is not None and not robot.mock:
+            raise ValueError('Preview-model kinematics is restricted to the mock robot')
+        self.kin = kinematics if kinematics is not None else PiperKinematics(robot.settings['joint_limits_deg'])
         self.active = self.neutral_seen = self.sent_joints = self.faulted = False
         self.instance = None
         self.velocity = np.zeros(6)
@@ -46,6 +48,8 @@ class GamepadControl:
         self.gripper_goal = None
         self.velocity[:] = 0
         self.message = reason + '；已锁住遥操作，恢复实机状态后重新启动程序。'
+        if self.robot.mock:
+            self.message = reason + '；模拟控制已锁定，请重新启动本程序。'
         if self.execute and self.sent_joints:
             try:
                 self.robot.stop()

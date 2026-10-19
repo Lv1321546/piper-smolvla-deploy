@@ -24,7 +24,7 @@ PAGE = r'''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>PiPER 
 <style>body{background:#111923;color:#e8eff6;font:16px system-ui;max-width:1160px;margin:24px auto;padding:0 18px}h1{font-size:26px}main{display:grid;grid-template-columns:2fr 1fr;gap:24px}img{width:100%;background:#000;border-radius:12px}button{padding:11px;background:#24435a;color:white;border:1px solid #68869b;border-radius:7px;margin:4px;cursor:pointer}pre,p{white-space:pre-wrap;line-height:1.6}#warning{color:#ffc181}small{color:#adc0d1}#badge{font-size:16px;background:#24435a;padding:7px;border-radius:6px}@media(max-width:780px){main{grid-template-columns:1fr}}</style>
 <h1>PiPER 手柄遥操作 <span id="badge">等待设备</span></h1>
 <main><section><img src="/stream" alt="相机实时图像"><p id="message"></p><p id="warning"></p>
-<small>先松开 LB 并让摇杆、扳机回中，再按住 LB 移动；RB 为精细速度。松开 LB 保持位置。Start 请求软件停止；不能代替实体急停。</small></section>
+<small><strong>移动必须持续按住 LB / L1，再拨动摇杆。</strong>先松开所有输入回中；RB 为精细速度。松开 LB 保持位置。Start 请求软件停止；不能代替实体急停。关闭 MuJoCo 后需重启本程序。</small></section>
 <section><pre id="pad"></pre><pre id="stats"></pre>
 <button data-c="open">O 请求张爪</button><button data-c="close">C 请求闭爪</button>
 <button data-c="record">R / X 开始录制</button><button data-c="finish">空格 / X 结束</button>
@@ -53,13 +53,14 @@ class GamepadSession(TeachingSession):
         self.pad = pad
         settings = {**robot.config.get('gamepad',{}), 'gripper_speed_m_s':args.gripper_speed}
         self.core = GamepadControl(robot, settings, execute=args.execute or args.mock,
-                                   mode=args.mode, clock=clock)
+                                   mode=args.mode, clock=clock,
+                                   kinematics=mirror.kinematics(robot.settings['joint_limits_deg']) if mirror else None)
         self.pad_state = None
         self.old_buttons = {}
         self.previous_pad_instance = None
         self.last_control_tick = None
         self.mirror = mirror
-        self.message = '手柄入口已启动。先检查映射；不会自动归零或张爪。'
+        self.message = '先松开所有输入回中，再持续按住 LB / L1 并拨动摇杆。不会自动归零或张爪。'
 
     def handle(self, command):
         if command in {'record','open','close','home'}:
@@ -220,7 +221,11 @@ def main(argv=None):
             raise RuntimeError('没有检测到可用手柄；未连接或使能机械臂。先运行 python -m e14.gamepad --monitor')
         if args.mujoco or args.mujoco_scene:
             from e14.gamepad_sim import MujocoMirror
-            mirror=MujocoMirror(args.mujoco_scene,headless=args.mujoco_headless)
+            from e14.install_mujoco_model import MODEL_ROOT
+            scene=args.mujoco_scene
+            if scene is None and (MODEL_ROOT/'scene.xml').is_file():scene=MODEL_ROOT/'scene.xml'
+            print('MuJoCo model:',scene or 'built-in simplified preview',flush=True)
+            mirror=MujocoMirror(scene,headless=args.mujoco_headless)
         if args.mock:
             backend=MockBackend()
             backend.state=[0.,75.,-75.,0.,45.,0.,.06]

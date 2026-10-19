@@ -19,13 +19,25 @@ python -m e14.gamepad_teleop --config config.mock.json --mock --demo \
 
 点击 R 开始，空格提前结束，S 标为成功。duration 是每条最长时间，episodes 是本次标注条数；未完成上一条标注不能开始下一条。Q 退出。
 
-加 `--mujoco` 可打开简化机械臂的三维窗口：
+加 `--mujoco` 打开三维窗口。本机现已安装松灵官方 PiPER 模型，该选项会优先使用它：
 
 ```bash
 python -m e14.gamepad_teleop --config config.mock.json --mock --demo --mujoco
 ```
 
-简化模型用同一 URDF 的关节变换生成，不依赖外部 meshes。它镜像模拟关节，只调用 mj_forward，不运行物体动力学、碰撞规划或抓取仿真；网页相机仍是测试图。已有完整场景可用 `--mujoco-scene /绝对路径/scene.xml` 替代，需含 joint1–joint8，且其 include/mesh 路径必须有效。模型手指范围 0–70 mm，超出的镜像值只裁剪显示，不改变原始反馈或控制目标。
+模型来源是[松灵官方 piper_ros](https://github.com/agilexrobotics/piper_ros/blob/ac41fcbcdda598f01b51cf6175ed9a24d0dacadc/src/piper_description/mujoco_model/piper_description.xml)，固定版本 ac41fcbcdda598f01b51cf6175ed9a24d0dacadc。XML、10 个 STL 和 MIT 许可证保持原样，放在 models/piper_official；scene.xml 是本项目添加的地面、相机和物体包装场景。source_manifest.json 记录来源和文件哈希。无需安装 ROS 或整个 piper_ros。
+
+新电脑或重新 clone 后下载一次（模型目录被 Git 忽略）：
+
+```bash
+python -m e14.install_mujoco_model
+```
+
+已安装文件会核对哈希，文件不同则报错，不覆盖。没有安装时 --mujoco 仍可使用内置简化模型，终端会打印当前模型路径。使用其他模型可指定 `--mujoco-scene /绝对路径/scene.xml`，需含 joint1–joint8、link6 末端，以及有效的 include/mesh 路径。
+
+仿真末端 IK 使用当前显示模型的 FK/Jacobian 与限位，实机仍沿用原 URDF 和控制检查。窗口镜像模拟关节，只调用 mj_forward，不运行物体动力学、碰撞规划或抓取仿真；网页相机仍是测试图。官方模型手指范围 0–70 mm，超出的镜像值只裁剪显示，不改变原始反馈或控制目标。
+
+移动时必须持续按住 LB/L1，再拨动摇杆；只拨动摇杆不会移动。先松开所有输入回中，再按下 LB。关闭三维窗口后当前控制会锁定：退出该终端程序后重新运行。使用此入口自己打开的窗口，手柄状态才会同步进去。
 
 ## 手柄到场后先核对输入
 

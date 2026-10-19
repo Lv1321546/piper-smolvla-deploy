@@ -1,8 +1,42 @@
 """Optional MuJoCo kinematic mirror. No physics stepping, CAN or real cameras."""
 import xml.etree.ElementTree as ET
+import time
 import numpy as np
 
-from e14.gamepad_kinematics import URDF
+from e14.gamepad_kinematics import URDF, PiperKinematics
+
+
+class MujocoKinematics(PiperKinematics):
+    """Use the displayed model for mock-mode IK, including its joint limits."""
+    def __init__(self, model, limits_deg):
+        import mujoco
+        self.mj, self.model, self.data = mujoco, model, mujoco.MjData(model)
+        joints = [model.joint(f'joint{i}') for i in range(1,7)]
+        if any(j.type[0] != mujoco.mjtJoint.mjJNT_HINGE for j in joints):
+            raise ValueError('PiPER preview requires six named hinge joints')
+        self.addresses = [j.qposadr[0] for j in joints]
+        self.dofs = [j.dofadr[0] for j in joints]
+        self.body = int(model.jnt_bodyid[joints[-1].id])
+        bounds = np.radians(np.asarray(limits_deg,float))
+        self.low = np.maximum(bounds[:,0], [j.range[0] for j in joints])
+        self.high = np.minimum(bounds[:,1], [j.range[1] for j in joints])
+        if np.any(self.low >= self.high):
+            raise ValueError('No joint range intersection between preview and config')
+
+    def forward(self, q, *, jacobian=False):
+        q = np.asarray(q,float)
+        if q.shape != (6,) or not np.isfinite(q).all():
+            raise ValueError('Six finite radians required')
+        self.data.qpos[self.addresses] = q
+        self.mj.mj_forward(self.model,self.data)
+        pose = np.eye(4)
+        pose[:3,3] = self.data.xpos[self.body]
+        pose[:3,:3] = self.data.xmat[self.body].reshape(3,3)
+        if not jacobian:
+            return pose
+        jp,jr = np.zeros((3,self.model.nv)),np.zeros((3,self.model.nv))
+        self.mj.mj_jacBody(self.model,self.data,jp,jr,self.body)
+        return pose,np.vstack([jp[:,self.dofs],jr[:,self.dofs]])
 
 
 def simplified_scene():
@@ -67,9 +101,12 @@ class MujocoMirror:
             import mujoco.viewer
             self.viewer=mujoco.viewer.launch_passive(self.model,self.data)
 
+    def kinematics(self, limits_deg):
+        return MujocoKinematics(self.model,limits_deg)
+
     def update(self, state):
         if self.viewer and not self.viewer.is_running():
-            raise RuntimeError('MuJoCo window closed')
+            raise RuntimeError('MuJoCo 窗口已关闭，请重新启动手柄程序')
         def apply():
             self.data.qpos[self.addresses]=np.radians(state[:6])
             for i,sign in [(7,1),(8,-1)]:
@@ -88,4 +125,14 @@ class MujocoMirror:
             return renderer.render().copy()
 
     def close(self):
-        if self.viewer:self.viewer.close()
+        if self.viewer:
+            self.viewer.close()
+            # launch_passive owns a daemon render thread. Its public running
+            # flag becomes false when exit is requested, before GL teardown.
+            # Keep the handle/model alive until the current pygame/MuJoCo
+            # combination has finished releasing the native viewer.
+            sim_ref=getattr(self.viewer,'_sim',None)
+            deadline=time.monotonic()+3.
+            while callable(sim_ref) and sim_ref() is not None and time.monotonic()<deadline:
+                time.sleep(.01)
+            self.viewer=None
