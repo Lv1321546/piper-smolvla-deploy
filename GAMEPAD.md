@@ -31,12 +31,18 @@ python -m e14.gamepad_teleop --config config.mock.json --mock --demo --mujoco
 
 优先 USB 数据线连接，选 XInput / Xbox 兼容模式。轴号需按这只手柄在 Ubuntu 下的实际输出确认。
 
+2026-10-19 E14 实际连接识别为 Sony Computer Entertainment Wireless Controller（6 轴、13 按钮、1 方向键）。已从 SDL 读取映射；该兼容模式的 X/Y 为 b3/b2，Back/Start 为 b8/b9，与 Xbox 默认表不同。对应模板是 gamepad.ds4.example.json，本机 gamepad.local.json 已填写并绑定当前 GUID。真实逐键操作仍需核对；仅识别静止输入不代表所有按键已通过测试。
+
+已修正真实手柄第二次轮询崩溃的问题：Joystick 使用 [get_init 与 JOYDEVICEREMOVED](https://www.pygame.org/docs/ref/joystick.html) 检查初始化和拔出，不再误用 Controller 的 get_attached。真实静止输入已连续读取成功。
+
 ```bash
 cp gamepad.example.json gamepad.local.json
 python -m e14.gamepad --config gamepad.local.json --monitor --duration 30
 ```
 
 此命令只读手柄，不导入 PiPER SDK、不打开 CAN。逐个操作输入，核对 raw_axes、raw_buttons、归一化 axes/buttons。扳机松开必须接近 0；若原始轴松开为 0、按满为 1，设置 trigger_min=0、trigger_max=1。默认是松开 -1、按满 1。轴号、按钮号、死区和可选 GUID 写在 gamepad.local.json，该文件被 Git 忽略。
+
+已有本地配置时跳过 cp，避免覆盖；Sony/DS4 兼容模式首次建立配置时用 gamepad.ds4.example.json。切换 USB/无线/兼容模式后 GUID 可能改变，应重新确认输入和映射。
 
 让真实手柄控制模拟机械臂：去掉 demo，保留 mock。
 

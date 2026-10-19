@@ -11,7 +11,7 @@ import numpy as np
 
 from e14.cameras import CameraReader
 from e14.export_dataset import load_raw_episode, build_samples
-from e14.gamepad import PadState, deadzone
+from e14.gamepad import PadState, PygamePad, deadzone
 from e14.gamepad_control import GamepadControl
 from e14.gamepad_kinematics import PiperKinematics, rotation
 from e14.gamepad_teleop import GamepadSession, main
@@ -19,6 +19,45 @@ from e14.piper_robot import PiperRobot, MockBackend
 from tests.test_teaching_ui import Clock, FakeDashboard
 
 ROOT=Path(__file__).resolve().parents[1]
+
+
+class JoystickAdapterTests(unittest.TestCase):
+    def make_pad(self):
+        # Match pygame.joystick.Joystick's public interface: intentionally no
+        # get_attached(), which belongs to pygame._sdl2.controller.Controller.
+        joy=SimpleNamespace(get_init=lambda:True,init=lambda:None,
+                            get_name=lambda:'test DS4',get_guid=lambda:'ds4',
+                            get_instance_id=lambda:7,get_numaxes=lambda:6,
+                            get_numbuttons=lambda:13,get_numhats=lambda:1,
+                            get_axis=lambda i:[0.,0.,-1.,0.,0.,-1.][i],
+                            get_button=lambda i:i==9,get_hat=lambda i:(0,0))
+        events=[]
+        pg=SimpleNamespace(error=RuntimeError,JOYDEVICEREMOVED=1,
+                           event=SimpleNamespace(get=lambda:list(events),pump=lambda:None),
+                           joystick=SimpleNamespace(get_count=lambda:1,Joystick=lambda i:joy))
+        pad=PygamePad.__new__(PygamePad)
+        pad.pg=pg;pad.clock=lambda:1.;pad.joy=None;pad.index=0
+        pad.guid=pad.selected_guid=None;pad.zone=.12
+        pad.trigger_min=-1.;pad.trigger_max=1.
+        profile=json.loads((ROOT/'gamepad.ds4.example.json').read_text())['gamepad']
+        pad.axis_map=profile['axis_map'];pad.button_map=profile['button_map']
+        return pad,events,pg
+
+    def test_repeated_polls_use_joystick_api_and_ds4_stop_mapping(self):
+        pad,_,_=self.make_pad()
+        first=pad.poll();second=pad.poll()
+        self.assertTrue(first.connected and second.connected)
+        self.assertTrue(second.buttons['start'])
+        self.assertFalse(second.buttons['back'])
+        self.assertEqual(second.axes['left_trigger'],0.)
+        self.assertEqual(second.axes['right_trigger'],0.)
+
+    def test_removal_event_returns_disconnected_instead_of_stale_input(self):
+        pad,events,pg=self.make_pad()
+        self.assertTrue(pad.poll().connected)
+        pg.joystick.get_count=lambda:0
+        events.append(SimpleNamespace(type=1,instance_id=7))
+        self.assertFalse(pad.poll().connected)
 
 
 class KinematicsTests(unittest.TestCase):

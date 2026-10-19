@@ -1,0 +1,17 @@
+{
+  "_note": "Sony/DS4 USB compatibility mapping observed via SDL on E14. Verify inputs; no robot settings here.",
+  "gamepad": {
+    "index": 0,
+    "guid": null,
+    "deadzone": 0.12,
+    "trigger_min": -1.0,
+    "trigger_max": 1.0,
+    "axis_map": {"left_x": 0, "left_y": 1, "right_x": 3, "right_y": 4, "left_trigger": 2, "right_trigger": 5},
+    "button_map": {"a": 0, "b": 1, "x": 3, "y": 2, "lb": 4, "rb": 5, "back": 8, "start": 9},
+    "linear_speed_m_s": 0.02,
+    "angular_speed_rad_s": 0.15,
+    "joint_speed_deg_s": 8,
+    "workspace_radius_m": 0.15,
+    "allow_rotation": false
+  }
+}

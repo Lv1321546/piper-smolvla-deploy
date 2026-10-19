@@ -1,5 +1,11 @@
 # 审查与验证记录
 
+## 2026-10-19 真实手柄接入修复
+
+E14 已接 USB Sony 兼容手柄，6 轴/13 按钮/1 方向键。真实检测发现 pygame.joystick.Joystick 不提供 get_attached，导致第二次读取崩溃；改用其公开 get_init 接口并保留 JOYDEVICEREMOVED、读取异常的断连处理。新增重复轮询和拔出回归测试。
+
+从当前设备 SDL 映射读取并新增 DS4 配置模板：X=b3、Y=b2、Back=b8、Start=b9；原 Xbox 示例保留。本机配置绑定当前 GUID，未改 robot/CAN 配置。修复后真实静止手柄连续读取 10 次正常，所有归一化轴回中、扳机松开为零。完整 110 项模拟回归通过（10.49 秒）。尚未完成操作者逐键核对，不把静止读取描述为运动验收。未连接 CAN 或操作机械臂。
+
 ## 2026-10-15 Gamepad_PiPER 集成
 
 上游参考版本 aa00c80e100d687a5f4a386b79b83ece06b3a30f；选择性集成 Linux 输入映射和 URDF，保留 MIT 许可证。新增 pygame 2.6.1，未降级现有 NumPy/LeRobot 依赖。实现详见 GAMEPAD.md。

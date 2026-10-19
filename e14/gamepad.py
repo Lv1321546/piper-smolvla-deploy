@@ -89,7 +89,10 @@ class PygamePad:
                 if event.type == self.pg.JOYDEVICEREMOVED and self.joy is not None:
                     if event.instance_id == self.joy.get_instance_id():
                         self.joy = None
-            if self.joy is not None and not self.joy.get_attached():
+            # pygame.joystick.Joystick has get_init(), not Controller.get_attached().
+            # Physical detach is reported by JOYDEVICEREMOVED above; subsequent
+            # read errors below also produce a disconnected state.
+            if self.joy is not None and not self.joy.get_init():
                 self.joy = None
             if self.joy is None:
                 devices = self.list_devices()
