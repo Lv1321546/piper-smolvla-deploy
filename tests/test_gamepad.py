@@ -121,6 +121,19 @@ class KinematicsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.kin.inverse(pose[:3,3],np.zeros((3,3)),self.q,np.ones(6)*.01)
 
+    def test_inverse_respects_an_additional_previous_target_window(self):
+        destination=self.q.copy();destination[0]+=.008
+        pose=self.kin.forward(destination)
+        bounds=np.c_[self.q-.02,self.q+.02]
+        bounds[0,1]=self.q[0]+.004
+        result=self.kin.inverse(pose[:3,3],pose[:3,:3],self.q,np.ones(6)*.02,joint_bounds=bounds)
+        self.assertIsNone(result)
+        bounds[0,1]=self.q[0]+.012
+        result=self.kin.inverse(pose[:3,3],pose[:3,:3],self.q,np.ones(6)*.02,joint_bounds=bounds)
+        self.assertIsNotNone(result)
+        self.assertTrue(np.all(result>=bounds[:,0]-1e-12))
+        self.assertTrue(np.all(result<=bounds[:,1]+1e-12))
+
     def test_mujoco_joint_mirror_matches_urdf_including_jaw(self):
         from e14.gamepad_sim import MujocoMirror
         mirror=MujocoMirror(headless=True)
@@ -216,7 +229,7 @@ class GamepadTests(unittest.TestCase):
         self.assertTrue(event['execute'])
         self.assertFalse(any(c[0] in {'mode','enable','gripper'} for c in self.backend.commands))
 
-    def test_left_stick_right_now_moves_toward_negative_y(self):
+    def test_left_stick_right_restored_toward_negative_y(self):
         self.activate()
         before=self.core.kin.forward(np.radians(self.backend.state[:6]))
         self.advance(lb=True,left_x=.5)
@@ -224,14 +237,15 @@ class GamepadTests(unittest.TestCase):
         self.assertLess(after[1,3],before[1,3]-.0001)
         np.testing.assert_allclose(after[[0,2],3],before[[0,2],3],atol=2e-5)
 
-    def test_cartesian_cruise_speed_is_four_centimetres_per_second(self):
-        self.assertAlmostEqual(self.core.linear_speed,.04)
+    def test_real_profile_cruise_speed_is_three_centimetres_per_second(self):
+        self.assertAlmostEqual(self.core.linear_speed,.12)
+        self.core.linear_speed=.03
         self.activate()
         for _ in range(12):self.advance(lb=True,left_y=-1.)
         before=self.core.kin.forward(np.radians(self.backend.state[:6]))
         self.advance(lb=True,left_y=-1.)
         after=self.core.kin.forward(np.radians(self.backend.state[:6]))
-        self.assertAlmostEqual((after[0,3]-before[0,3])/.05,.04,delta=.001)
+        self.assertAlmostEqual((after[0,3]-before[0,3])/.05,.03,delta=.001)
 
     def assert_rotation_input(self, expected_axis, *, hat=(0,0), direction=1, **axes):
         self.activate()
@@ -252,10 +266,18 @@ class GamepadTests(unittest.TestCase):
         self.assert_rotation_input(1,hat=(0,1),direction=-1)
 
     def test_dpad_down_controls_positive_pitch(self):
-        self.assert_rotation_input(1,hat=(0,-1))
+        self.assert_rotation_input(1,hat=(0,-1),direction=1)
 
     def test_dpad_right_controls_roll(self):
-        self.assert_rotation_input(0,hat=(1,0))
+        self.assert_rotation_input(0,hat=(1,0),direction=1)
+
+    def test_right_stick_up_restored_toward_positive_z(self):
+        self.activate()
+        before=self.core.kin.forward(np.radians(self.backend.state[:6]))
+        self.advance(lb=True,right_y=-.5)
+        after=self.core.kin.forward(np.radians(self.backend.state[:6]))
+        self.assertGreater(after[2,3],before[2,3]+.0001)
+        np.testing.assert_allclose(after[:2,3],before[:2,3],atol=2e-5)
 
     def test_rotation_can_still_be_disabled_in_config(self):
         self.core=GamepadControl(self.robot,{'allow_rotation':False},execute=True,clock=self.clock)
@@ -278,6 +300,138 @@ class GamepadTests(unittest.TestCase):
         np.testing.assert_allclose(end[:3,3],start[:3,3],atol=1e-4)
         self.assertFalse(self.core.faulted)
 
+    def test_cartesian_reversals_with_motor_lag_bound_both_feedback_and_previous_target(self):
+        # This seed/lag profile reproduced a 1.023-degree previous-goal jump
+        # while every joint was within 0.75 degrees of measured feedback.
+        self.backend.state=[-13.545,18.499,-19.196,7.014,44.821,-10.388,.0003]
+        self.backend.refresh()
+        self.core=GamepadControl(self.robot,{'linear_speed_m_s':.03,'angular_speed_rad_s':.15},
+                                 execute=True,clock=self.clock)
+        desired=np.array(self.backend.state[:6],float)
+        original_refresh=self.backend.refresh
+        last=[self.clock()]
+        sent=[]
+        def refresh():
+            if self.clock()>last[0]:
+                q=np.array(self.backend.state[:6])
+                self.backend.state[:6]=(q+np.clip((desired-q)*.35,-.5,.5)).tolist()
+                last[0]=self.clock()
+            original_refresh()
+        def joint(raw):
+            target=np.array(raw)/1000
+            actual=np.array(self.backend.state[:6])
+            self.assertTrue(np.all(np.abs(target-actual)<=1.+1e-9))
+            if sent:self.assertTrue(np.all(np.abs(target-sent[-1])<=1.+1e-9))
+            sent.append(target.copy());desired[:]=target
+        self.backend.refresh=refresh;self.backend.joint=joint
+        self.activate()
+        random=np.random.default_rng(19)
+        for tick in range(350):
+            if tick%5==0:inputs=random.choice([-1.,0.,1.],size=6)
+            self.clock.sleep(.05)
+            state=self.state(lb=True,left_x=inputs[0],left_y=inputs[1],right_y=inputs[2],right_x=inputs[3])
+            state.hat=tuple(inputs[4:].astype(int))
+            self.core.tick(state)
+        self.assertGreater(len(sent),100)
+        self.assertFalse(self.core.faulted)
+        self.advance(lb=False)
+
+    def test_sender_still_rejects_excessive_step_and_tracking_with_joint_details(self):
+        self.backend.joint=lambda raw:self.backend.commands.append(('joint',list(raw)))
+        initial=self.backend.state[:6].copy()
+        first=initial.copy();first[0]=.7
+        self.robot.send_joint_action(first)
+        copy_of_target=self.robot.last_joint_target;copy_of_target[0]=99.
+        self.assertEqual(self.robot.last_joint_target,first)
+        self.clock.sleep(.05)
+        target=initial.copy();target[0]=-.6
+        before=len(self.backend.commands)
+        with self.assertRaisesRegex(ValueError,'J1: 上一目标的步长'):
+            self.robot.send_joint_action(target)
+        self.assertEqual(len(self.backend.commands),before)
+        self.backend.state[0]=2.;self.backend.refresh()
+        with self.assertRaisesRegex(ValueError,'J1: 实测角度的跟踪差'):
+            self.robot.send_joint_action(first)
+        self.assertEqual(len(self.backend.commands),before)
+
+    def test_limited_cartesian_step_retains_pending_target_instead_of_retracting(self):
+        self.backend.joint=lambda raw:self.backend.commands.append(('joint',list(raw)))
+        self.core.linear_speed=.03;self.activate()
+        self.advance(lb=True,left_y=-1.)
+        pending=self.robot.last_joint_target
+        reference=self.core.position_goal.copy()
+        # Exhausted lead/unreachable increment is not an LB release. The
+        # pending goal must survive, without growing a queue of future poses.
+        with patch.object(self.core.kin,'inverse',return_value=None):
+            for _ in range(20):
+                self.advance(lb=True,left_y=-1.)
+                np.testing.assert_allclose(self.robot.last_joint_target,pending,atol=1e-12)
+                np.testing.assert_allclose(self.core.position_goal,reference,atol=1e-12)
+                self.assertEqual(self.core.cartesian_scale,0.)
+        self.assertFalse(self.core.faulted)
+        self.assertGreater(self.core.velocity[0],0)
+        self.advance(lb=False)
+        self.assertIsNone(self.core.position_goal)
+        np.testing.assert_allclose(self.robot.last_joint_target,self.backend.state[:6],atol=1e-12)
+
+    def test_near_singular_y_motion_uses_smaller_steps_and_makes_monotone_progress(self):
+        initial=[-6.282,16.686,-15.465,3.904,27.699,1.874,.0004]
+        self.backend.state=initial.copy();self.backend.refresh()
+        self.core=GamepadControl(self.robot,{'linear_speed_m_s':.03},execute=True,clock=self.clock)
+        desired=np.array(initial[:6]);last=[self.clock()]
+        refresh_original=self.backend.refresh
+        sent=[];positions=[];scales=[]
+        def refresh():
+            if self.clock()>last[0]:
+                q=np.array(self.backend.state[:6])
+                self.backend.state[:6]=(q+np.clip((desired-q)*.35,-.5,.5)).tolist()
+                last[0]=self.clock()
+            refresh_original()
+        def joint(raw):
+            target=np.array(raw)/1000
+            self.assertTrue(np.all(np.abs(target-self.backend.state[:6])<=1.+1e-9))
+            if sent:self.assertTrue(np.all(np.abs(target-sent[-1])<=1.+1e-9))
+            sent.append(target.copy());desired[:]=target
+        self.backend.refresh=refresh;self.backend.joint=joint
+        self.activate()
+        start=self.core.kin.forward(np.radians(initial[:6]))
+        for _ in range(100):
+            self.advance(lb=True,left_x=1.)
+            positions.append(self.core.kin.forward(np.radians(self.backend.state[:6]))[:3,3])
+            scales.append(self.core.cartesian_scale)
+        positions=np.array(positions)
+        self.assertLess(positions[-1,1]-start[1,3],-.002)
+        self.assertLess(np.max(np.diff(positions[:,1])),1e-5)
+        np.testing.assert_allclose(positions[:,[0,2]],np.tile(start[[0,2],3],(100,1)),atol=5e-5)
+        final=self.core.kin.forward(np.radians(self.backend.state[:6]))
+        np.testing.assert_allclose(final[:3,:3],start[:3,:3],atol=2e-4)
+        self.assertTrue(any(0.<scale<.125 for scale in scales))
+        self.assertFalse(self.core.faulted)
+
+    def test_delayed_x_motion_in_a_bent_pose_continues_without_retracting(self):
+        self.core.linear_speed=.03
+        desired=np.array(self.backend.state[:6]);last=[self.clock()]
+        refresh_original=self.backend.refresh
+        def refresh():
+            if self.clock()>last[0]:
+                q=np.array(self.backend.state[:6])
+                self.backend.state[:6]=(q+np.clip((desired-q)*.2,-.5,.5)).tolist()
+                last[0]=self.clock()
+            refresh_original()
+        self.backend.refresh=refresh
+        self.backend.joint=lambda raw:desired.__setitem__(slice(None),np.array(raw)/1000)
+        self.activate()
+        start=self.core.kin.forward(np.radians(self.backend.state[:6]))[:3,3]
+        positions=[]
+        for _ in range(60):
+            self.advance(lb=True,left_y=-1.)
+            positions.append(self.core.kin.forward(np.radians(self.backend.state[:6]))[:3,3])
+        positions=np.array(positions)
+        self.assertGreater(positions[-1,0]-start[0],.02)
+        self.assertGreater(np.min(np.diff(positions[:,0])),-1e-5)
+        np.testing.assert_allclose(positions[:,1:],np.tile(start[1:],(60,1)),atol=1e-4)
+        self.assertFalse(self.core.faulted)
+
     def test_joint_mode_preserves_other_joints(self):
         self.core.mode='joint';self.activate()
         before=self.robot.get_feedback()['state']
@@ -285,6 +439,94 @@ class GamepadTests(unittest.TestCase):
         after=self.robot.get_feedback()['state']
         self.assertGreater(after[0],before[0])
         self.assertEqual(after[1:],before[1:])
+
+    def use_motor_deadband(self, degrees=.08):
+        def joint(raw):
+            self.backend.commands.append(('joint',list(raw)))
+            for i,value in enumerate(raw):
+                target=value/1000
+                if abs(target-self.backend.state[i])>degrees:
+                    self.backend.state[i]=target
+            self.backend.refresh()
+        self.backend.joint=joint
+
+    def test_slow_joint_input_crosses_driver_deadband(self):
+        self.use_motor_deadband()
+        self.core.mode='joint';self.core.joint_speed=1.;self.activate()
+        initial=self.backend.state.copy()
+        for _ in range(10):self.advance(lb=True,left_x=1.)
+        self.assertGreater(self.backend.state[0]-initial[0],.3)
+        self.assertEqual(self.backend.state[1:],initial[1:])
+
+    def test_stalled_joint_reference_is_bounded_and_cleared_on_release(self):
+        self.backend.joint=lambda raw:self.backend.commands.append(('joint',list(raw)))
+        self.core.mode='joint';self.core.joint_speed=1.;self.activate()
+        for _ in range(40):self.advance(lb=True,left_x=1.)
+        targets=[c[1][0]/1000 for c in self.backend.commands if c[0]=='joint']
+        self.assertGreater(max(targets),.7)
+        self.assertLessEqual(max(abs(q) for q in targets),.75)
+        self.advance(lb=False)
+        self.assertIsNone(self.core.joint_goal)
+        self.advance(lb=True,left_x=1.)
+        self.assertLessEqual(abs(self.backend.commands[-1][1][0]),50)
+
+    def test_last_four_reversals_are_undone_in_joint_mode(self):
+        self.core.mode='joint';self.activate()
+        for kwargs,hat,index in [({'left_x':1.},(0,0),0),({'right_y':-1.},(0,0),2),
+                                  ({},(1,0),3),({},(0,1),4)]:
+            self.advance(lb=False)
+            before=self.backend.state[:6].copy()
+            state=self.state(lb=True,**kwargs);state.hat=hat
+            self.clock.sleep(.05);self.core.tick(state)
+            self.assertGreater(self.backend.state[index],before[index])
+            np.testing.assert_allclose(np.delete(self.backend.state[:6],index),np.delete(before,index),atol=1e-12)
+
+    def test_cartesian_front_back_holds_height_but_joint2_motion_does_not(self):
+        initial=self.backend.state.copy()
+        start=self.core.kin.forward(np.radians(initial[:6]))
+        self.activate()
+        heights=[]
+        for _ in range(12):
+            self.advance(lb=True,left_y=-1.)
+            heights.append(self.core.kin.forward(np.radians(self.backend.state[:6]))[2,3])
+        end=self.core.kin.forward(np.radians(self.backend.state[:6]))
+        self.assertGreater(end[0,3]-start[0,3],.002)
+        self.assertLess(max(abs(z-start[2,3]) for z in heights),.0001)
+        self.advance(lb=False)
+        self.backend.state=initial.copy();self.backend.refresh()
+        self.robot._last_target=self.robot._last_sent=None
+        self.core=GamepadControl(self.robot,execute=True,mode='joint',clock=self.clock)
+        self.activate()
+        for _ in range(12):self.advance(lb=True,left_y=-1.)
+        end=self.core.kin.forward(np.radians(self.backend.state[:6]))
+        self.assertGreater(abs(end[2,3]-start[2,3]),.001)
+
+    def test_gripper_speed_is_fifty_mm_per_second_with_matching_step_limit(self):
+        self.assertAlmostEqual(self.core.grip_speed,.05)
+        self.activate()
+        before=self.backend.state[6]
+        self.advance(lb=True,left_trigger=1.)
+        self.assertAlmostEqual(before-self.backend.state[6],.0025)
+        self.assertFalse(self.core.faulted)
+
+    def test_gripper_step_mismatch_and_invalid_directions_fail_before_control(self):
+        self.robot.settings['max_step_delta'][6]=.002
+        with self.assertRaisesRegex(ValueError,'max_step_delta'):
+            GamepadControl(self.robot)
+        for directions in [{'left_x':True},{'hat_x':0},{'unknown':1}]:
+            with self.assertRaisesRegex(ValueError,'input_directions'):
+                GamepadControl(self.robot,{'input_directions':directions})
+
+    def test_slow_cartesian_reference_crosses_driver_deadband(self):
+        self.use_motor_deadband()
+        self.core.linear_speed=.0015;self.activate()
+        initial=self.core.kin.forward(np.radians(self.backend.state[:6]))
+        for _ in range(40):self.advance(lb=True,left_y=-1.)
+        final=self.core.kin.forward(np.radians(self.backend.state[:6]))
+        self.assertGreater(final[0,3]-initial[0,3],.001)
+        self.assertFalse(self.core.faulted)
+        self.advance(lb=False)
+        self.assertIsNone(self.core.position_goal)
 
     def test_fine_speed_does_not_discard_small_stick_motion(self):
         self.activate()
@@ -366,7 +608,7 @@ class GamepadTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'mock'):
             GamepadControl(self.robot,kinematics=self.core.kin)
 
-    def make_session(self):
+    def make_session(self, mode='cartesian'):
         class Pad:
             def __init__(inner):inner.current=None
             def poll(inner):
@@ -378,7 +620,7 @@ class GamepadTests(unittest.TestCase):
         dashboard=FakeDashboard()
         args=SimpleNamespace(open_width=.06,close_width=0.,gripper_speed=.02,duration=.5,task='Pick foam',
                              home_file=self.root/'home.json',output=self.root/'raw',mock=True,execute=False,
-                             episodes=2,mode='cartesian',run_seconds=0)
+                             episodes=2,mode=mode,run_seconds=0)
         session=GamepadSession(args,self.robot,cameras,dashboard,pad,clock=self.clock,sleep=self.clock.sleep)
         return session,dashboard,pad,args
 
@@ -389,6 +631,24 @@ class GamepadTests(unittest.TestCase):
         self.assertFalse(session.start_requested)
         self.assertFalse(self.backend.commands)
         self.assertFalse(args.output.exists())
+
+    def test_dashboard_joint_mode_explains_arc_motion_and_shows_effective_directions(self):
+        session,dashboard,_,_=self.make_session(mode='joint')
+        session.poll()
+        self.assertTrue(any('J2' in warning and 'cartesian' in warning for warning in dashboard.state['warnings']))
+        self.assertEqual(dashboard.state['teleop_mapping']['左摇杆向右'],'J1+')
+        self.assertEqual(dashboard.state['teleop_mapping']['右摇杆向上'],'J3+')
+
+    def test_gripper_config_is_used_unless_cli_explicitly_overrides_it(self):
+        profile=self.root/'gamepad.json'
+        profile.write_text(json.dumps({'gamepad':{'gripper_speed_m_s':.03}}))
+        for extra,expected in [([],.03),(['--gripper-speed','.04'],.04)]:
+            with patch('e14.gamepad_teleop.GamepadControl',wraps=GamepadControl) as core, \
+                 patch('e14.gamepad_teleop.PiperRobot.connect',side_effect=RuntimeError('before hardware')), \
+                 patch('e14.gamepad_teleop.PygamePad'):
+                with self.assertRaisesRegex(RuntimeError,'before hardware'):
+                    main(['--config',str(ROOT/'config.mock.json'),'--gamepad-config',str(profile),'--mock',*extra])
+                self.assertAlmostEqual(core.call_args.args[1]['gripper_speed_m_s'],expected)
 
     def test_session_spacing_includes_solver_and_send_time(self):
         session,dashboard,pad,args=self.make_session()

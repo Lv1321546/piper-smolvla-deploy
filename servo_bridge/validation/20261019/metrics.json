@@ -1,0 +1,746 @@
+{
+  "sim": {
+    "events_sha256": "cb4ea95e6985fbcafab5a950f2a4d5a97e4baf33ad117756158219c3f3481988",
+    "source": "sim",
+    "hardware_output": false,
+    "input_cycles": 360,
+    "trajectory_count": 359,
+    "candidate_accept_count": 359,
+    "candidate_rejections": {},
+    "output_status_counts": {
+      "NO_WARNING": 359
+    },
+    "on_original_ik_failed_cycles_output_status_counts": {},
+    "on_original_ik_failed_input_cycles_latest_status_counts": {},
+    "joint_position_violations": 0,
+    "max_output_step_deg": 0.06483388257515954,
+    "max_candidate_lead_deg": 0.1035502827090204,
+    "declared_joint_velocity_rad_s": {
+      "min": 0.0,
+      "median": 0.011331920834047882,
+      "p95": 0.03303840961878967,
+      "max": 0.03614586749286719
+    },
+    "position_difference_velocity_rad_s": {
+      "min": 0.0,
+      "median": 0.007073698856769336,
+      "p95": 0.020833275587131016,
+      "max": 0.022826676554932767
+    },
+    "declared_velocity_difference_acceleration_rad_s2": {
+      "min": 0.0,
+      "median": 0.0017190419694829225,
+      "p95": 0.017761297337405665,
+      "max": 0.26514526899164054
+    },
+    "halt_status_nonzero_candidate_count": 0,
+    "one_period_candidate_translation_residual_m": {
+      "min": 0.0,
+      "median": 6.761811901021286e-05,
+      "p95": 8.093962264484544e-05,
+      "max": 0.00014999618282337228
+    },
+    "one_period_candidate_rotation_residual_rad": {
+      "min": 0.0,
+      "median": 5.981617027787586e-06,
+      "p95": 0.0005721953332364758,
+      "max": 0.0006275942779865637
+    },
+    "instantaneous_candidate_progress_m_s": {
+      "min": 0.0020000763754424167,
+      "median": 0.0034033409340505916,
+      "p95": 0.0034324973284770577,
+      "max": 0.003647749552114221
+    },
+    "reference_heading_error_rad": {
+      "min": 0.0,
+      "median": 0.000145827599346673,
+      "p95": 0.018974051092271366,
+      "max": 0.021265930732276256
+    },
+    "pre_rotation_heading_error_rad": {
+      "min": 0.0,
+      "median": 0.0001296326635345419,
+      "p95": 0.0001701647178583421,
+      "max": 0.00017016668432077222
+    },
+    "jacobian_condition": {
+      "min": 11.352169581725068,
+      "median": 11.461161401895598,
+      "p95": 11.576169641909003,
+      "max": 11.576169641909003
+    },
+    "input_wrapper_processing_ms": {
+      "min": 0.842020999698434,
+      "median": 1.8709040004978306,
+      "p95": 2.643475250715711,
+      "max": 4.820530999495531
+    },
+    "output_guard_processing_ms": {
+      "min": 0.1348549994872883,
+      "median": 0.353576000634348,
+      "p95": 0.5613934996290482,
+      "max": 0.9689309990790207
+    },
+    "latest_input_to_output_callback_ms_includes_servo_phase": {
+      "min": 43.72040199996263,
+      "median": 46.02111900021555,
+      "p95": 47.22247189947666,
+      "max": 48.33105500074453
+    },
+    "child_cpu_s_including_collision_threads": {
+      "robot_state_publisher": 0.11,
+      "servo_node": 1.5200000000000002
+    },
+    "servo_cpu_ms_per_output_amortized_not_single_calculation": 4.233983286908079,
+    "fk_same_stamp_tf_position_error_m": {
+      "min": 0.0,
+      "median": 1.6883057536160649e-16,
+      "p95": 3.381669114697534e-16,
+      "max": 4.509747244882934e-16
+    },
+    "fk_same_stamp_tf_angle_error_rad": {
+      "min": 1.0031442548020353e-16,
+      "median": 7.02852068884574e-16,
+      "p95": 1.2651070832282944e-15,
+      "max": 1.564270482554917e-15
+    },
+    "simulated_xyz_phases": {
+      "X": {
+        "measured_displacement_m": [
+          0.005844954096951516,
+          4.49644986039166e-06,
+          5.030683975504324e-07
+        ],
+        "input_integral_m": [
+          0.013754259875004211,
+          0.0,
+          0.0
+        ],
+        "position_tracking_residual_m": 0.007909307072169908,
+        "reverse_steps_above_1um": 0,
+        "cross_axis_drift_m": 4.524504299879728e-06,
+        "max_heading_error_rad": 9.038791245931199e-05
+      },
+      "Y": {
+        "measured_displacement_m": [
+          3.6806722958360183e-06,
+          0.005873464285717167,
+          -1.604213523753728e-05
+        ],
+        "input_integral_m": [
+          0.0,
+          0.013748837590001135,
+          0.0
+        ],
+        "position_tracking_residual_m": 0.00787539050328808,
+        "reverse_steps_above_1um": 0,
+        "cross_axis_drift_m": 1.6458962650445808e-05,
+        "max_heading_error_rad": 0.00016468084077332285
+      },
+      "Z": {
+        "measured_displacement_m": [
+          9.847261881135161e-06,
+          -4.611848847063671e-06,
+          0.005840979681291714
+        ],
+        "input_integral_m": [
+          0.0,
+          0.0,
+          0.013749004569999662
+        ],
+        "position_tracking_residual_m": 0.007908032364510195,
+        "reverse_steps_above_1um": 0,
+        "cross_axis_drift_m": 1.0873716767684364e-05,
+        "max_heading_error_rad": 0.00016541437316727118
+      }
+    },
+    "scheduler_overruns": 0,
+    "limitations": [
+      "Log replay is open-loop with recorded real feedback: candidate output cannot change subsequent measurements.",
+      "Synthetic first-order plant is not PiPER motor/firmware/contact dynamics.",
+      "Input callback latency includes asynchronous Servo period and DDS scheduling; it is not IK calculation time.",
+      "Butterworth smoothing does not prove a hard acceleration/jerk bound. The independent guard rejects violations.",
+      "No physical motion, zero calibration, fingertip TCP, wrist-camera/table calibration or emergency stopping was validated."
+    ],
+    "raw_events": "outputs/servo_bridge/validation_20261019/normal_sim_quantized/events.jsonl"
+  },
+  "replay": {
+    "events_sha256": "1600be0ab77eb3fc2c3b5b08998b818c34cfe51f843950c6dedfa7866a3a26b0",
+    "source": "log",
+    "hardware_output": false,
+    "input_cycles": 1261,
+    "trajectory_count": 1652,
+    "candidate_accept_count": 373,
+    "candidate_rejections": {
+      "Servo halt/collision/joint-bound or status not yet available": 908,
+      "Previous-command step limit exceeded": 371
+    },
+    "output_status_counts": {
+      "NO_WARNING": 744,
+      "HALT_FOR_SINGULARITY": 908
+    },
+    "on_original_ik_failed_cycles_output_status_counts": {
+      "HALT_FOR_SINGULARITY": 451,
+      "NO_WARNING": 15
+    },
+    "on_original_ik_failed_input_cycles_latest_status_counts": {
+      "HALT_FOR_SINGULARITY": 225,
+      "NO_WARNING": 7
+    },
+    "joint_position_violations": 0,
+    "max_output_step_deg": 0.9672090340019848,
+    "max_candidate_lead_deg": 0.9861335535236079,
+    "declared_joint_velocity_rad_s": {
+      "min": 0.0,
+      "median": 2.220446049250313e-15,
+      "p95": 0.10840370358539866,
+      "max": 0.15
+    },
+    "position_difference_velocity_rad_s": {
+      "min": 0.0,
+      "median": 0.0,
+      "p95": 0.09954532386851397,
+      "max": 0.3377439945466378
+    },
+    "declared_velocity_difference_acceleration_rad_s2": {
+      "min": 0.0,
+      "median": 0.0,
+      "p95": 2.091928190018537,
+      "max": 2.9998771115160605
+    },
+    "halt_status_nonzero_candidate_count": 637,
+    "one_period_candidate_translation_residual_m": {
+      "min": 0.0,
+      "median": 3.141477388396733e-05,
+      "p95": 0.000545470254772505,
+      "max": 0.0008835034955465667
+    },
+    "one_period_candidate_rotation_residual_rad": {
+      "min": 0.0,
+      "median": 1.707094826628251e-16,
+      "p95": 0.0029030501981476774,
+      "max": 0.005895717551648787
+    },
+    "instantaneous_candidate_progress_m_s": {
+      "min": -0.007505869455151082,
+      "median": -2.9038737366457233e-15,
+      "p95": 0.0007017986563382398,
+      "max": 0.0029095831778152685
+    },
+    "reference_heading_error_rad": {
+      "min": 0.0,
+      "median": 0.0017484437209548183,
+      "p95": 0.09610241578719711,
+      "max": 0.09877963167321746
+    },
+    "pre_rotation_heading_error_rad": null,
+    "jacobian_condition": {
+      "min": 319.8365381104553,
+      "median": 410.45879778171417,
+      "p95": 628.2335162833516,
+      "max": 628.2335162833516
+    },
+    "input_wrapper_processing_ms": {
+      "min": 0.705364000168629,
+      "median": 2.063642999928561,
+      "p95": 2.8080140000383835,
+      "max": 5.621479000183172
+    },
+    "output_guard_processing_ms": {
+      "min": 0.007935999747132882,
+      "median": 0.025761999495443888,
+      "p95": 0.3894752505402721,
+      "max": 0.7326329996431014
+    },
+    "latest_input_to_output_callback_ms_includes_servo_phase": {
+      "min": 0.731045000065933,
+      "median": 33.03333199983172,
+      "p95": 88.16437825062167,
+      "max": 99.77637399970263
+    },
+    "child_cpu_s_including_collision_threads": {
+      "robot_state_publisher": 0.49000000000000005,
+      "servo_node": 8.61
+    },
+    "servo_cpu_ms_per_output_amortized_not_single_calculation": 5.211864406779661,
+    "fk_same_stamp_tf_position_error_m": {
+      "min": 2.6020852139652106e-18,
+      "median": 8.971325855612482e-17,
+      "p95": 1.4839302090792504e-16,
+      "max": 2.5898555862986566e-16
+    },
+    "fk_same_stamp_tf_angle_error_rad": {
+      "min": 5.682377955034957e-17,
+      "median": 3.337393374504757e-16,
+      "p95": 1.168087359047548e-15,
+      "max": 1.6031257203677059e-15
+    },
+    "simulated_xyz_phases": {},
+    "scheduler_overruns": 0,
+    "limitations": [
+      "Log replay is open-loop with recorded real feedback: candidate output cannot change subsequent measurements.",
+      "Synthetic first-order plant is not PiPER motor/firmware/contact dynamics.",
+      "Input callback latency includes asynchronous Servo period and DDS scheduling; it is not IK calculation time.",
+      "Butterworth smoothing does not prove a hard acceleration/jerk bound. The independent guard rejects violations.",
+      "No physical motion, zero calibration, fingertip TCP, wrist-camera/table calibration or emergency stopping was validated."
+    ],
+    "raw_events": "outputs/servo_bridge/validation_20261019/guarded_replay_quantized/events.jsonl"
+  },
+  "singularity": {
+    "events_sha256": "ccf7e3189e3fff5509e4c0fc29d6502e00a564a11800f0ef399fb14bfadec141",
+    "source": "sim",
+    "hardware_output": false,
+    "input_cycles": 120,
+    "trajectory_count": 119,
+    "candidate_accept_count": 39,
+    "candidate_rejections": {
+      "Servo halt/collision/joint-bound or status not yet available": 80
+    },
+    "output_status_counts": {
+      "NO_WARNING": 39,
+      "HALT_FOR_SINGULARITY": 80
+    },
+    "on_original_ik_failed_cycles_output_status_counts": {},
+    "on_original_ik_failed_input_cycles_latest_status_counts": {},
+    "joint_position_violations": 0,
+    "max_output_step_deg": 6.3611093629270335e-15,
+    "max_candidate_lead_deg": 6.3611093629270335e-15,
+    "declared_joint_velocity_rad_s": {
+      "min": 0.0,
+      "median": 2.220446049250313e-15,
+      "p95": 2.220446049250313e-15,
+      "max": 2.220446049250313e-15
+    },
+    "position_difference_velocity_rad_s": {
+      "min": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "max": 2.243226417306655e-15
+    },
+    "declared_velocity_difference_acceleration_rad_s2": {
+      "min": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "max": 4.48645283461331e-14
+    },
+    "halt_status_nonzero_candidate_count": 0,
+    "one_period_candidate_translation_residual_m": {
+      "min": 0.0,
+      "median": 0.00024999999999995837,
+      "p95": 0.00024999999999995837,
+      "max": 0.00024999999999995837
+    },
+    "one_period_candidate_rotation_residual_rad": {
+      "min": 0.0,
+      "median": 4.513615811405667e-17,
+      "p95": 4.513615811405667e-17,
+      "max": 4.513615811405667e-17
+    },
+    "instantaneous_candidate_progress_m_s": {
+      "min": 8.326672684688674e-16,
+      "median": 8.326672684688674e-16,
+      "p95": 8.326672684688674e-16,
+      "max": 8.326672684688674e-16
+    },
+    "reference_heading_error_rad": {
+      "min": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "max": 0.0
+    },
+    "pre_rotation_heading_error_rad": {
+      "min": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "max": 0.0
+    },
+    "jacobian_condition": {
+      "min": 628.2335162833516,
+      "median": 628.2335162833516,
+      "p95": 628.2335162833516,
+      "max": 628.2335162833516
+    },
+    "input_wrapper_processing_ms": {
+      "min": 0.7985490010469221,
+      "median": 1.6682424993632594,
+      "p95": 2.343533399744046,
+      "max": 3.8211789997149026
+    },
+    "output_guard_processing_ms": {
+      "min": 0.008363998858840205,
+      "median": 0.020284998754505068,
+      "p95": 0.4268295002475497,
+      "max": 0.6806439996580593
+    },
+    "latest_input_to_output_callback_ms_includes_servo_phase": {
+      "min": 1.0518599992792588,
+      "median": 47.761503999936394,
+      "p95": 49.16015890048584,
+      "max": 49.704957998983446
+    },
+    "child_cpu_s_including_collision_threads": {
+      "robot_state_publisher": 0.03,
+      "servo_node": 0.5800000000000001
+    },
+    "servo_cpu_ms_per_output_amortized_not_single_calculation": 4.873949579831934,
+    "fk_same_stamp_tf_position_error_m": {
+      "min": 6.711973323575862e-17,
+      "median": 6.711973323575862e-17,
+      "p95": 6.711973323575862e-17,
+      "max": 6.711973323575862e-17
+    },
+    "fk_same_stamp_tf_angle_error_rad": {
+      "min": 1.4505441958944427e-16,
+      "median": 1.4505441958944427e-16,
+      "p95": 1.4505441958944427e-16,
+      "max": 1.4505441958944427e-16
+    },
+    "simulated_xyz_phases": {
+      "X": {
+        "measured_displacement_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "input_integral_m": [
+          0.013750521820002182,
+          0.0,
+          0.0
+        ],
+        "position_tracking_residual_m": 0.013750521820002182,
+        "reverse_steps_above_1um": 0,
+        "cross_axis_drift_m": 0.0,
+        "max_heading_error_rad": 0.0
+      },
+      "Y": {
+        "measured_displacement_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "input_integral_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "position_tracking_residual_m": 0.0,
+        "reverse_steps_above_1um": 0,
+        "cross_axis_drift_m": 0.0,
+        "max_heading_error_rad": 0.0
+      }
+    },
+    "scheduler_overruns": 0,
+    "limitations": [
+      "Log replay is open-loop with recorded real feedback: candidate output cannot change subsequent measurements.",
+      "Synthetic first-order plant is not PiPER motor/firmware/contact dynamics.",
+      "Input callback latency includes asynchronous Servo period and DDS scheduling; it is not IK calculation time.",
+      "Butterworth smoothing does not prove a hard acceleration/jerk bound. The independent guard rejects violations.",
+      "No physical motion, zero calibration, fingertip TCP, wrist-camera/table calibration or emergency stopping was validated."
+    ],
+    "raw_events": "outputs/servo_bridge/validation_20261019/singularity_final/events.jsonl"
+  },
+  "collision": {
+    "events_sha256": "5ed80df6d783ea90c44d246d5f26e3d07f1ea929ec2ce341709eff1023122676",
+    "source": "sim",
+    "hardware_output": false,
+    "input_cycles": 120,
+    "trajectory_count": 119,
+    "candidate_accept_count": 41,
+    "candidate_rejections": {
+      "Servo halt/collision/joint-bound or status not yet available": 78
+    },
+    "output_status_counts": {
+      "NO_WARNING": 41,
+      "HALT_FOR_COLLISION": 78
+    },
+    "on_original_ik_failed_cycles_output_status_counts": {},
+    "on_original_ik_failed_input_cycles_latest_status_counts": {},
+    "joint_position_violations": 0,
+    "max_output_step_deg": 6.3611093629270335e-15,
+    "max_candidate_lead_deg": 6.3611093629270335e-15,
+    "declared_joint_velocity_rad_s": {
+      "min": 0.0,
+      "median": 2.220446049250313e-15,
+      "p95": 2.220446049250313e-15,
+      "max": 2.220446049250313e-15
+    },
+    "position_difference_velocity_rad_s": {
+      "min": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "max": 2.189173659755182e-15
+    },
+    "declared_velocity_difference_acceleration_rad_s2": {
+      "min": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "max": 4.451389632634634e-14
+    },
+    "halt_status_nonzero_candidate_count": 0,
+    "one_period_candidate_translation_residual_m": {
+      "min": 0.0,
+      "median": 0.0002500000000000555,
+      "p95": 0.0002500000000000555,
+      "max": 0.0002500000000000555
+    },
+    "one_period_candidate_rotation_residual_rad": {
+      "min": 0.0,
+      "median": 1.309227883336068e-16,
+      "p95": 1.309227883336068e-16,
+      "max": 1.309227883336068e-16
+    },
+    "instantaneous_candidate_progress_m_s": {
+      "min": -1.1102230246251565e-15,
+      "median": -1.1102230246251565e-15,
+      "p95": 0.0,
+      "max": 0.0
+    },
+    "reference_heading_error_rad": {
+      "min": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "max": 0.0
+    },
+    "pre_rotation_heading_error_rad": {
+      "min": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "max": 0.0
+    },
+    "jacobian_condition": {
+      "min": 11.576169641909003,
+      "median": 11.576169641909003,
+      "p95": 11.576169641909003,
+      "max": 11.576169641909003
+    },
+    "input_wrapper_processing_ms": {
+      "min": 0.7928649993118597,
+      "median": 2.029312499871594,
+      "p95": 3.5149963495314296,
+      "max": 4.096921000382281
+    },
+    "output_guard_processing_ms": {
+      "min": 0.007779999577905983,
+      "median": 0.02282499917782843,
+      "p95": 0.4132884008868132,
+      "max": 0.608857000770513
+    },
+    "latest_input_to_output_callback_ms_includes_servo_phase": {
+      "min": 42.90310599935765,
+      "median": 45.87529399941559,
+      "p95": 46.909063299244735,
+      "max": 47.53867599902151
+    },
+    "child_cpu_s_including_collision_threads": {
+      "robot_state_publisher": 0.03,
+      "servo_node": 0.78
+    },
+    "servo_cpu_ms_per_output_amortized_not_single_calculation": 6.554621848739496,
+    "fk_same_stamp_tf_position_error_m": {
+      "min": 1.2719202621569003e-16,
+      "median": 1.2719202621569003e-16,
+      "p95": 1.2719202621569003e-16,
+      "max": 1.2719202621569003e-16
+    },
+    "fk_same_stamp_tf_angle_error_rad": {
+      "min": 7.02852068884574e-16,
+      "median": 7.02852068884574e-16,
+      "p95": 7.02852068884574e-16,
+      "max": 7.02852068884574e-16
+    },
+    "simulated_xyz_phases": {
+      "X": {
+        "measured_displacement_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "input_integral_m": [
+          0.013750425025000375,
+          0.0,
+          0.0
+        ],
+        "position_tracking_residual_m": 0.013750425025000375,
+        "reverse_steps_above_1um": 0,
+        "cross_axis_drift_m": 0.0,
+        "max_heading_error_rad": 0.0
+      },
+      "Y": {
+        "measured_displacement_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "input_integral_m": [
+          0.0,
+          0.003749040624998088,
+          0.0
+        ],
+        "position_tracking_residual_m": 0.003749040624998088,
+        "reverse_steps_above_1um": 0,
+        "cross_axis_drift_m": 0.0,
+        "max_heading_error_rad": 0.0
+      }
+    },
+    "scheduler_overruns": 0,
+    "limitations": [
+      "Log replay is open-loop with recorded real feedback: candidate output cannot change subsequent measurements.",
+      "Synthetic first-order plant is not PiPER motor/firmware/contact dynamics.",
+      "Input callback latency includes asynchronous Servo period and DDS scheduling; it is not IK calculation time.",
+      "Butterworth smoothing does not prove a hard acceleration/jerk bound. The independent guard rejects violations.",
+      "No physical motion, zero calibration, fingertip TCP, wrist-camera/table calibration or emergency stopping was validated."
+    ],
+    "raw_events": "outputs/servo_bridge/validation_20261019/collision_final/events.jsonl"
+  },
+  "timeout": {
+    "events_sha256": "36bcd3bddd7b96d992aced8fcbf20c683ec3a7ad77d7131742360fcf87870f01",
+    "source": "sim",
+    "hardware_output": false,
+    "input_cycles": 120,
+    "trajectory_count": 61,
+    "candidate_accept_count": 61,
+    "candidate_rejections": {},
+    "output_status_counts": {
+      "NO_WARNING": 61
+    },
+    "on_original_ik_failed_cycles_output_status_counts": {},
+    "on_original_ik_failed_input_cycles_latest_status_counts": {},
+    "joint_position_violations": 0,
+    "max_output_step_deg": 0.027491474348409508,
+    "max_candidate_lead_deg": 0.04029957140276417,
+    "declared_joint_velocity_rad_s": {
+      "min": 0.0,
+      "median": 0.011311490916887657,
+      "p95": 0.011431824266383561,
+      "max": 0.014067204162415692
+    },
+    "position_difference_velocity_rad_s": {
+      "min": 0.0,
+      "median": 0.007020821850730019,
+      "p95": 0.007259059824081618,
+      "max": 0.00988988913282375
+    },
+    "declared_velocity_difference_acceleration_rad_s2": {
+      "min": 0.0,
+      "median": 0.0016801308291723776,
+      "p95": 0.05642895622265769,
+      "max": 0.12908054978633263
+    },
+    "halt_status_nonzero_candidate_count": 0,
+    "one_period_candidate_translation_residual_m": {
+      "min": 0.0,
+      "median": 7.913557224953473e-05,
+      "p95": 8.159446694341536e-05,
+      "max": 0.00014999618282337228
+    },
+    "one_period_candidate_rotation_residual_rad": {
+      "min": 0.0,
+      "median": 2.9747658786398906e-06,
+      "p95": 6.273623408220199e-06,
+      "max": 6.559608663769026e-06
+    },
+    "instantaneous_candidate_progress_m_s": {
+      "min": 0.0020000763754424167,
+      "median": 0.0034082417316666502,
+      "p95": 0.0034370543093266703,
+      "max": 0.004206373837659649
+    },
+    "reference_heading_error_rad": {
+      "min": 0.0,
+      "median": 5.391491097262199e-05,
+      "p95": 5.391765990431679e-05,
+      "max": 5.3917659904366725e-05
+    },
+    "pre_rotation_heading_error_rad": {
+      "min": 0.0,
+      "median": 5.391491097262199e-05,
+      "p95": 5.391765990431679e-05,
+      "max": 5.3917659904366725e-05
+    },
+    "jacobian_condition": {
+      "min": 11.472185908553435,
+      "median": 11.47965307169575,
+      "p95": 11.576169641909003,
+      "max": 11.576169641909003
+    },
+    "input_wrapper_processing_ms": {
+      "min": 0.7607349998579593,
+      "median": 1.5121609994821483,
+      "p95": 2.525415901072847,
+      "max": 3.873694000503747
+    },
+    "output_guard_processing_ms": {
+      "min": 0.13444899923342746,
+      "median": 0.243479998971452,
+      "p95": 0.37816999974893406,
+      "max": 0.5560500012506964
+    },
+    "latest_input_to_output_callback_ms_includes_servo_phase": {
+      "min": 1.2632509988179663,
+      "median": 48.365291000664,
+      "p95": 50.01278099916817,
+      "max": 148.5345060009422
+    },
+    "child_cpu_s_including_collision_threads": {
+      "robot_state_publisher": 0.03,
+      "servo_node": 0.33000000000000007
+    },
+    "servo_cpu_ms_per_output_amortized_not_single_calculation": 5.409836065573772,
+    "fk_same_stamp_tf_position_error_m": {
+      "min": 2.7755575615628914e-17,
+      "median": 1.7218612439522077e-16,
+      "p95": 3.0746374851253994e-16,
+      "max": 3.9350319887992495e-16
+    },
+    "fk_same_stamp_tf_angle_error_rad": {
+      "min": 1.773155558379513e-16,
+      "median": 6.430039294172462e-16,
+      "p95": 1.2506381795249512e-15,
+      "max": 1.9734414328259247e-15
+    },
+    "simulated_xyz_phases": {
+      "X": {
+        "measured_displacement_m": [
+          0.004051941553374017,
+          1.2215693657224858e-05,
+          -5.1322815743937156e-06
+        ],
+        "input_integral_m": [
+          0.013760650350004653,
+          0.0,
+          0.0
+        ],
+        "position_tracking_residual_m": 0.009708717838173009,
+        "reverse_steps_above_1um": 0,
+        "cross_axis_drift_m": 1.3250037195646843e-05,
+        "max_heading_error_rad": 5.391765968442367e-05
+      },
+      "Y": {
+        "measured_displacement_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "input_integral_m": [
+          0.0,
+          0.0037530786249953966,
+          0.0
+        ],
+        "position_tracking_residual_m": 0.0037530786249953966,
+        "reverse_steps_above_1um": 0,
+        "cross_axis_drift_m": 0.0,
+        "max_heading_error_rad": 5.391765990431679e-05
+      }
+    },
+    "scheduler_overruns": 0,
+    "limitations": [
+      "Log replay is open-loop with recorded real feedback: candidate output cannot change subsequent measurements.",
+      "Synthetic first-order plant is not PiPER motor/firmware/contact dynamics.",
+      "Input callback latency includes asynchronous Servo period and DDS scheduling; it is not IK calculation time.",
+      "Butterworth smoothing does not prove a hard acceleration/jerk bound. The independent guard rejects violations.",
+      "No physical motion, zero calibration, fingertip TCP, wrist-camera/table calibration or emergency stopping was validated."
+    ],
+    "raw_events": "outputs/servo_bridge/validation_20261019/timeout_final/events.jsonl"
+  }
+}

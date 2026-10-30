@@ -69,7 +69,7 @@ class PiperKinematics:
             j[3:,i] = axis
         return t,j
 
-    def inverse(self, position, orientation, seed, max_delta, *, iterations=12):
+    def inverse(self, position, orientation, seed, max_delta, *, iterations=12, joint_bounds=None):
         seed = np.asarray(seed,float)
         position, orientation = np.asarray(position,float), np.asarray(orientation,float)
         max_delta = np.asarray(max_delta,float)
@@ -79,6 +79,11 @@ class PiperKinematics:
         if not np.allclose(orientation.T@orientation,np.eye(3),atol=1e-6) or abs(np.linalg.det(orientation)-1)>1e-6:
             raise ValueError('IK orientation must be a proper rotation matrix')
         lo,hi = np.maximum(self.low,seed-max_delta), np.minimum(self.high,seed+max_delta)
+        if joint_bounds is not None:
+            bounds = np.asarray(joint_bounds,float)
+            if bounds.shape!=(6,2) or not np.isfinite(bounds).all() or np.any(bounds[:,0]>bounds[:,1]):
+                raise ValueError('joint_bounds needs six finite ordered radian pairs')
+            lo,hi = np.maximum(lo,bounds[:,0]),np.minimum(hi,bounds[:,1])
         if np.any(lo>hi):
             return None
         q = np.clip(seed,lo,hi)

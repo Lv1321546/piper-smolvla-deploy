@@ -1,0 +1,113 @@
+{
+  "outputs/servo_bridge/20261023_supervised_xyz_01": {
+    "events_sha256": "c409e9c32c6e62eb5a5c9ef8fc42b4a40eee57d44f882769c5b1747e0095f1a1",
+    "source": "can",
+    "hardware_output": "external manually armed worker requested; not confirmed",
+    "input_cycles": 1283,
+    "trajectory_count": 1281,
+    "candidate_accept_count": 746,
+    "candidate_rejections": {
+      "Joint acceleration limit exceeded": 484,
+      "[Errno 2] No such file or directory": 51
+    },
+    "output_status_counts": {
+      "NO_WARNING": 1281
+    },
+    "on_original_ik_failed_cycles_output_status_counts": {},
+    "on_original_ik_failed_input_cycles_latest_status_counts": {},
+    "joint_position_violations": 0,
+    "max_output_step_deg": 0.12267658749565039,
+    "max_candidate_lead_deg": 0.2034820952714329,
+    "declared_joint_velocity_rad_s": {
+      "min": 0.0,
+      "median": 0.0,
+      "p95": 0.048973289512368456,
+      "max": 0.07102865062686578
+    },
+    "position_difference_velocity_rad_s": {
+      "min": 0.0,
+      "median": 0.0,
+      "p95": 0.014098548417782688,
+      "max": 0.04293406862359836
+    },
+    "declared_velocity_difference_acceleration_rad_s2": {
+      "min": 0.0,
+      "median": 0.0,
+      "p95": 0.30499695694565165,
+      "max": 0.7508134880696681
+    },
+    "halt_status_nonzero_candidate_count": 0,
+    "one_period_candidate_translation_residual_m": {
+      "min": 0.0,
+      "median": 4.4170657341907814e-07,
+      "p95": 0.0003999265855433862,
+      "max": 0.0005694871281528594
+    },
+    "one_period_candidate_rotation_residual_rad": {
+      "min": 0.0,
+      "median": 1.351578793049209e-09,
+      "p95": 0.00027070694967938733,
+      "max": 0.0016235053251605694
+    },
+    "instantaneous_candidate_progress_m_s": {
+      "min": -0.003248657471165428,
+      "median": 0.00996619529753728,
+      "p95": 0.010001216879292646,
+      "max": 0.01200774817327479
+    },
+    "reference_heading_error_rad": {
+      "min": 0.0,
+      "median": 0.003988077340807058,
+      "p95": 0.023492488530328027,
+      "max": 0.023492488530328027
+    },
+    "pre_rotation_heading_error_rad": null,
+    "jacobian_condition": {
+      "min": 14.6878470417334,
+      "median": 14.866701977502538,
+      "p95": 14.935822483975397,
+      "max": 14.935822483975397
+    },
+    "input_wrapper_processing_ms": {
+      "min": 1.3404370038188063,
+      "median": 2.2069420010666363,
+      "p95": 3.629632796946679,
+      "max": 28.194160004204605
+    },
+    "output_guard_processing_ms": {
+      "min": 0.195262000488583,
+      "median": 0.4509509963099845,
+      "p95": 0.6950980023248121,
+      "max": 1.2330460012890399
+    },
+    "latest_input_to_output_callback_ms_includes_servo_phase": {
+      "min": 1.3883909996366128,
+      "median": 48.226878003333695,
+      "p95": 49.209190998226404,
+      "max": 51.31584500486497
+    },
+    "child_cpu_s_including_collision_threads": {},
+    "servo_cpu_ms_per_output_amortized_not_single_calculation": null,
+    "fk_same_stamp_tf_position_error_m": {
+      "min": 5.928593550334434e-17,
+      "median": 1.1364755910069911e-16,
+      "p95": 1.7554167342883506e-16,
+      "max": 2.9255174101215994e-16
+    },
+    "fk_same_stamp_tf_angle_error_rad": {
+      "min": 4.22649987113988e-16,
+      "median": 5.091110481300369e-16,
+      "p95": 5.629732282611338e-16,
+      "max": 9.095130535094924e-16
+    },
+    "simulated_xyz_phases": {},
+    "scheduler_overruns": 0,
+    "limitations": [
+      "Log replay is open-loop with recorded real feedback: candidate output cannot change subsequent measurements.",
+      "Synthetic first-order plant is not PiPER motor/firmware/contact dynamics.",
+      "Input callback latency includes asynchronous Servo period and DDS scheduling; it is not IK calculation time.",
+      "Butterworth smoothing does not prove a hard acceleration/jerk bound. The independent guard rejects violations.",
+      "No physical motion, zero calibration, fingertip TCP, wrist-camera/table calibration or emergency stopping was validated."
+    ]
+  }
+}

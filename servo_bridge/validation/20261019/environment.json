@@ -1,0 +1,36 @@
+{
+  "date": "2026-10-19T18:21:19.897117+08:00",
+  "os": "Ubuntu 22.04.5 LTS",
+  "system_python": "Python 3.10.12",
+  "packages": [
+    "python3-numpy 1:1.21.5-1ubuntu22.04.1",
+    "python3-pykdl 1.5.1-2build1",
+    "python3-scipy 1.8.0-1exp2ubuntu1",
+    "ros-humble-moveit-core 2.5.10-1jammy.20261005.213935",
+    "ros-humble-moveit-kinematics 2.5.10-1jammy.20261006.005613",
+    "ros-humble-moveit-servo 2.5.10-1jammy.20261006.192111",
+    "ros-humble-robot-state-publisher 3.0.3-2jammy.20260915.225247"
+  ],
+  "conda_python": "/home/eureka/miniconda3/envs/lerobot/bin/python (3.12)",
+  "conda_packages_changed": false,
+  "passive_hardware_probe": {
+    "command": "ip -details -statistics -json link show can0",
+    "result": "Device can0 does not exist",
+    "can_initialization_or_transmission_performed": false
+  },
+  "real_sdk_writer_started": false,
+  "real_actuator_commands_sent": 0,
+  "tests": {
+    "legacy_unittest_tests": 150,
+    "legacy_result": "passed; mock hardware and local HTTP services",
+    "servo_contract_tests": 23,
+    "servo_contract_result": "passed; fake SDK, fake CAN, ROS messages without actuator hardware"
+  },
+  "sources": {
+    "Gamepad_PiPER": "aa00c80e100d687a5f4a386b79b83ece06b3a30f",
+    "Servo": "Ubuntu ROS Humble binary 2.5.10",
+    "official_srdf": "https://github.com/agilexrobotics/piper_ros/blob/humble/src/piper_moveit/piper_with_gripper_moveit/config/piper.srdf"
+  },
+  "delivery_verified_at": "2026-10-19T18:32:52.224141+08:00",
+  "installed_directory_smoke": "outputs/servo_bridge/validation_20261019/normal_sim_quantized"
+}

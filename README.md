@@ -1,5 +1,7 @@
 # PiPER + SmolVLA：E14 / 服务器部署
 
+日常 CAN 启用、手柄操控、相机、采集与服务器命令，见 [常用命令速查](常用命令.md)。
+
 代码入口已经实现；默认只读或 dry-run。模拟链路可以直接运行。真实策略训练和实机效果要用真实数据验证，当前没有 PiPER 微调模型。
 
 **手柄遥操作与演示采集已集成：**见 [GAMEPAD.md](GAMEPAD.md)。没有手柄也可用 `python -m e14.gamepad_teleop --config config.mock.json --mock --demo` 先跑模拟；真实手柄和实机控制待现场验收。
@@ -209,8 +211,9 @@ prepare_control 会切到 CAN/MOVE_J 并使能；夹爪控制必须按实际需�
     python -m e14.run_robot --config config.local.json --execute --duration 2
 
 默认 stop_strategy=emergency_stop：结束或异常时发送 MotionCtrl_1(0x01,0,0)。
-这是锁停，不会自动发送恢复/复位；后续恢复应按实际固件和官方流程处理。
+这会锁住软件后续执行，但不是机械关节的位置锁定。松灵[官方说明](https://github.com/agilexrobotics/piper_ros/blob/noetic/README%28EN%29.md)指出停止后会带阻尼下落；2026-10-19 首次六关节测试触发该停止后，操作者也报告关节变软下落。不会自动恢复/复位。
 stop_strategy=hold 仅允许用新鲜、健康的当前反馈发送保持目标。两种停止方式都需在真实机械臂核对后才设置 stop_strategy_verified=true。
+当前实机保持验证未通过，保持 stop_strategy_verified=false；不能只改开关来继续执行。独立 CAN 排查日志见 GAMEPAD.md 的实机诊断命令。
 CAN 断开时软件无法保证停止；硬件停止方式由现场操作者掌握。
 
 动作分块按 E14 本机时间对齐：跳过网络往返期间已经过去的动作，新块原子替换旧块；超时/块耗尽/反馈过期会停止，旧块不会在重连后继续执行。
@@ -224,9 +227,13 @@ CAN 断开时软件无法保证停止；硬件停止方式由现场操作者掌�
 依赖沿用现有环境：E14 lerobot、服务器 eureka312；基础包 numpy、Pillow、LeRobot，真实相机 OpenCV，数据导出需 datasets/pyarrow，训练需 SmolVLA extras。
 测试写缓存时可设置 HF_HOME=/tmp/piper-test-hf，避免污染原有缓存。
 
-本次没有自动运行真实机械臂或训练。未配置真实相机设备、尚无 PiPER 任务数据/微调模型，实机成功率和真实停止行为不能通过模拟测试替代。
+已进行部分真实硬件检查和有界关节/保持测试，详见 REVIEW.md；尚无 PiPER 任务微调模型，抓取成功率、完整遥操作及 CAN 故障处理仍需现场验证，不能用模拟测试替代。
 审查和测试记录见 REVIEW.md。
 
 ## GitHub 版本管理
 
 已接入私有仓库 [piper-smolvla-deploy](https://github.com/Lv1321546/piper-smolvla-deploy)。两端同步方式见 [GIT_WORKFLOW.md](GIT_WORKFLOW.md)。
+
+## MoveIt Servo 接入
+
+新增独立的低速 Servo 与 SDK 桥接路线，默认输出关闭，保留旧遥操作作对照。启动、停止、回退和返场实测步骤见 [MOVEIT_SERVO.md](MOVEIT_SERVO.md)，结果与限制见 [离线验证报告](servo_bridge/validation/20261019/REPORT.md)。

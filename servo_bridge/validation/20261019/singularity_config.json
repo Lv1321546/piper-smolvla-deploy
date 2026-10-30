@@ -1,0 +1,64 @@
+{
+  "schema": 1,
+  "hardware_output": false,
+  "can_interface": "can0",
+  "publish_period_s": 0.05,
+  "feedback_max_age_s": 0.15,
+  "command_max_age_s": 0.15,
+  "maximum_tracking_error_deg": 1.0,
+  "maximum_joint_step_deg": 1.0,
+  "maximum_joint_velocity_rad_s": 0.15,
+  "maximum_joint_acceleration_rad_s2": 0.5,
+  "linear_speed_m_s": 0.01,
+  "angular_speed_rad_s": 0.05,
+  "linear_acceleration_m_s2": 0.1,
+  "angular_acceleration_rad_s2": 0.5,
+  "orientation_hold_gain_s_inv": 1.0,
+  "orientation_hold_deadband_rad": 0.002,
+  "orientation_correction_max_rad_s": 0.02,
+  "orientation_reference_max_lead_rad": 0.05,
+  "joint_limits_deg": [
+    [
+      -150,
+      150
+    ],
+    [
+      0,
+      180
+    ],
+    [
+      -170,
+      0
+    ],
+    [
+      -100,
+      100
+    ],
+    [
+      -70,
+      70
+    ],
+    [
+      -120,
+      120
+    ]
+  ],
+  "model": {
+    "planning_frame": "base_link",
+    "control_frame": "link6",
+    "control_point": "flange, not calibrated gripper fingertip or wrist camera",
+    "tcp_calibrated": false
+  },
+  "sim_initial_joints_deg": [
+    -11.224,
+    24.834,
+    -36.685,
+    13.408,
+    38.098,
+    -7.509
+  ],
+  "sim_gripper_width_m": 0.0643,
+  "sim_time_constant_s": 0.08,
+  "sim_table_top_z_m": -0.05,
+  "note": "Offline commissioning profile. No enable, mode, reset or gripper commands. Do not arm before supervised model/stop commissioning."
+}

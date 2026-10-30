@@ -1,0 +1,42 @@
+{
+  "operator_observation": "没有明显偏移，好像抖了一下",
+  "source": "real CAN and live gamepad",
+  "input_cycles": 1050,
+  "active_input_cycles": 39,
+  "nonzero_input_candidates_accepted": 21,
+  "servo_status_counts": {
+    "NO_WARNING": 1050
+  },
+  "max_feedback_change_deg": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "max_candidate_lead_deg": [
+    0.03992892486350279,
+    0.10120420473324258,
+    0.09308494581402679,
+    0.02970144451317196,
+    0.009353702962949835,
+    0.05399585628374446
+  ],
+  "candidate_rejections": {
+    "[Errno 2] No such file or directory": 1,
+    "Hardware relay is latched closed; restart only after supervised recovery": 8
+  },
+  "stop": {
+    "reason": "1 second live input budget completed",
+    "worker_exit": 1,
+    "runtime_exit": 0,
+    "lease_revoked": true,
+    "socket_remaining": false
+  },
+  "limitations": [
+    "Candidate acceptance and SDK function invocation do not prove physical execution or board acknowledgement.",
+    "A one-second low-speed retry does not identify firmware deadband or eliminate other actuator/bridge causes.",
+    "Post-stop socket errors arose after the supervisor deliberately ended the worker; they did not initiate this stop."
+  ]
+}

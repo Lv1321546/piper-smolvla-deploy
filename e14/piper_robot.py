@@ -529,6 +529,12 @@ class PiperRobot(_Robot):
             raise RuntimeError("Gripper feedback outside configured metre limits")
         return snap
 
+    @property
+    def last_joint_target(self):
+        """Copy of the last successfully transmitted teleop/policy joint goal."""
+        with self._command_lock:
+            return None if self._last_target is None else list(self._last_target[:6])
+
     def send_joint_action(self, joints):
         """Six-joint teleop goal, never sends or silently enables the gripper.
 
@@ -548,9 +554,16 @@ class PiperRobot(_Robot):
                 for v, (lo,hi) in zip(values, self.settings['joint_limits_deg']):
                     if not lo <= v <= hi:
                         raise ValueError("Teleop joint target outside configured limits")
-                for ref in [snap['state']] + ([self._last_target] if self._last_target else []):
-                    if any(abs(a-b)>limit+1e-9 for a,b,limit in zip(values,ref,self.settings['max_step_delta'][:6])):
-                        raise ValueError("Teleop joint target exceeds per-cycle tracking/step limit")
+                references = [('实测角度的跟踪差',snap['state'])]
+                if self._last_target is not None:
+                    references.append(('上一目标的步长',self._last_target))
+                for label,ref in references:
+                    errors = [f'J{i}: {label} {abs(a-b):.3f}° > {limit:.3f}° '
+                              f'(目标 {a:.3f}°, 参考 {b:.3f}°)'
+                              for i,(a,b,limit) in enumerate(zip(values,ref,self.settings['max_step_delta'][:6]),1)
+                              if abs(a-b)>limit+1e-9]
+                    if errors:
+                        raise ValueError('Teleop joint target exceeds per-cycle tracking/step limit: '+ '; '.join(errors))
             if (self._last_sent is not None and sent != self._last_target[:6]
                     and self._clock()-self._last_sent < .8/self.settings['control_hz']):
                 raise RuntimeError("Teleop target arrived faster than control_hz")
@@ -617,9 +630,11 @@ class PiperRobot(_Robot):
     def stop(self):
         """Latch execution off. Never disable/reset or recover an emergency stop.
 
-        emergency_stop: MotionCtrl_1(0x01,0,0). hold: one position goal from fresh
-        healthy feedback, never a stale SDK cache. Neither is a guarantee of a
-        physical stop on a broken CAN bus; both require physical verification.
+        emergency_stop: MotionCtrl_1(0x01,0,0); official PiPER documentation
+        warns this allows damped falling, NOT position holding. hold: one
+        position goal from fresh healthy feedback, never a stale SDK cache.
+        Neither guarantees stopping on a broken CAN bus; both require physical
+        verification. Never silently fall back from hold to emergency_stop.
         """
         with self._command_lock:
             self._prepared = False

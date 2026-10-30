@@ -24,12 +24,21 @@
       "back": 6,
       "start": 7
     },
-    "linear_speed_m_s": 0.04,
-    "angular_speed_rad_s": 0.15,
-    "joint_speed_deg_s": 8,
+    "linear_speed_m_s": 0.12,
+    "angular_speed_rad_s": 0.45,
+    "joint_speed_deg_s": 24.0,
     "workspace_radius_m": 0.15,
     "allow_rotation": true,
     "invert_y": true,
-    "invert_pitch": true
+    "invert_pitch": true,
+    "gripper_speed_m_s": 0.05,
+    "input_directions": {
+      "left_x": 1,
+      "left_y": 1,
+      "right_x": 1,
+      "right_y": 1,
+      "hat_x": 1,
+      "hat_y": 1
+    }
   }
 }

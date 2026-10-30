@@ -1,0 +1,93 @@
+{
+  "log_sha256": "8b96e8976bc7daf670a4c017432b747b61fc480aefbc80bf32cf1152dd838c59",
+  "urdf_sha256": "7e004cb611ddc37ed2aea21335d6b11fd19daa5f82fb553ba5fed899314f98f7",
+  "sdk_fk_sha256": "354d9b1f41271645de127c4c59ae30c86b0debddeba7a5c0ca0b1b2d44f9b93d",
+  "hardware_output": false,
+  "feedback": "same recorded feedback; planner pre-command state used where present",
+  "chain": [
+    "joint1",
+    "joint2",
+    "joint3",
+    "joint4",
+    "joint5",
+    "joint6"
+  ],
+  "planning_frame": "base_link",
+  "control_frame": "link6",
+  "control_point_calibrated_to_fingertips_or_camera": false,
+  "records": 1261,
+  "model_errors": {
+    "kdl_position_m": {
+      "min": 8.673617379884035e-19,
+      "median": 1.1449174941446927e-16,
+      "p95": 1.2700557310853578e-16,
+      "max": 1.8181524120954227e-16
+    },
+    "kdl_orientation_rad": {
+      "min": 3.91371455128689e-17,
+      "median": 1.902905468488074e-16,
+      "p95": 2.962875196116109e-16,
+      "max": 4.956606175564436e-16
+    },
+    "kdl_jacobian_max_abs": {
+      "min": 1.1102230246251565e-16,
+      "median": 3.3306690738754696e-16,
+      "p95": 4.440892098500626e-16,
+      "max": 5.551115123125783e-16
+    },
+    "sdk_offset0_position_m": {
+      "min": 0.009882741952584057,
+      "median": 0.009883894686099166,
+      "p95": 0.009889602384397228,
+      "max": 0.009890057875130847
+    },
+    "sdk_offset1_position_m": {
+      "min": 6.840374637516576e-05,
+      "median": 7.168294585677704e-05,
+      "p95": 7.228572184503918e-05,
+      "max": 7.230589279663998e-05
+    },
+    "sdk_offset0_orientation_rad": {
+      "min": 6.293829511768029e-05,
+      "median": 6.351588839200656e-05,
+      "p95": 6.364227351048436e-05,
+      "max": 6.370110926978778e-05
+    },
+    "sdk_offset1_orientation_rad": {
+      "min": 6.29382951180471e-05,
+      "median": 6.351588839243688e-05,
+      "p95": 6.364227351080886e-05,
+      "max": 6.370110927039475e-05
+    }
+  },
+  "legacy": {
+    "planning_cycles": 610,
+    "failed": 232,
+    "jacobian_condition": {
+      "min": 319.8365381104553,
+      "median": 404.79661564268434,
+      "p95": 624.8791271603177,
+      "max": 628.2335162833516
+    },
+    "tracking_gap_deg": {
+      "min": 0.0,
+      "median": 0.2325684629034992,
+      "p95": 0.7243101386552135,
+      "max": 0.75
+    },
+    "previous_target_step_deg": {
+      "min": 0.0,
+      "median": 0.05723615544477667,
+      "p95": 0.7122752329905505,
+      "max": 0.9966553585474678
+    },
+    "joint_position_violations": 0,
+    "recorded_control_tick_ms": {
+      "min": 0.715105999915977,
+      "median": 14.304599499155302,
+      "p95": 28.54017774980093,
+      "max": 45.27751299974625
+    }
+  },
+  "interpretation": "KDL/URDF/SDK comparison checks software conventions; it is not physical TCP, table, camera or joint-zero calibration."
+}
