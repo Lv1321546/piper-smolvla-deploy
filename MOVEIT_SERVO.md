@@ -1,5 +1,45 @@
 # PiPER：MoveIt Servo 与最小 SDK 桥接
 
+## 2026-10-30 实机恢复更新（当前状态）
+
+用户已确认低速 X/Y/Z 手柄平移恢复，仍有轻微抖动；尚未完成夹爪/相机/数据采集联调。下面 10 月 23 日内容是历史记录，不再代表当前三轴运动状态。详见 [恢复报告](servo_bridge/validation/20261030/REPORT.md)。
+
+本次新增 `--execution-mode integrated-velocity`：把 Servo 速度平滑、限加速度后积分为 SDK 连续位置目标。必须显式选用；省略时仍是旧 `servo-position` 对照模式。六关节状态及固件末端位置可以只读查看：
+
+```bash
+conda activate lerobot
+cd /home/eureka/piper_ws/smolvla_deploy
+python -m servo_bridge.inspect_state --samples 10
+```
+
+假定 CAN 已 UP/1Mbps、实机已 CAN/MOVE_J 且六关节使能，并按下文现场授权流程更新 `outputs/servo_bridge/arm.local.json`（临时测试文件已过期，不能直接重用）：
+
+```bash
+# 终端 A：SDK worker，使用 lerobot 环境
+python -m servo_bridge.sdk_worker --execute \
+  --arm-file outputs/servo_bridge/arm.local.json
+
+# 终端 B：系统 ROS 环境由 run.sh 隔离设置
+cd /home/eureka/piper_ws/smolvla_deploy
+bash servo_bridge/run.sh --source can --input gamepad \
+  --gamepad-config gamepad.local.servo.json \
+  --execution-mode integrated-velocity --duration 60 \
+  --output-socket /tmp/piper-servo-sdk.sock \
+  --output outputs/servo_bridge/my_recovered_001
+```
+
+先回中，持续按 LB 才运动；左摇杆前后控制基座 X、左右控制 Y，右摇杆上下控制 Z；RB 为精细速度。松开 LB 请求实测位置保持。先退出终端 B，再退出 A。程序不负责自动使能/回零/切模式/夹爪。输出目录需使用新名字。
+
+不接实机输出的完整模拟：
+
+```bash
+bash servo_bridge/run.sh --source sim --duration 18 \
+  --execution-mode integrated-velocity \
+  --output outputs/servo_bridge/my_integrated_sim_001
+```
+
+回退：停止两个进程后，把 `--execution-mode` 改为 `servo-position` 即为旧桥接对照；不要在同一 CAN 上同时运行旧遥操作与新 worker。新路线尚未接入采集 UI，不能同时启动会发动作的旧采集控制器。
+
 ## 2026-10-23 实机返场测试更新
 
 **当前位置保持已由用户确认通过；Cartesian 手柄平移未通过，仍不能用于示教采集。** 手柄和 CAN 输入正常，在条件数约 15 的姿态下，Servo 未报奇异性；但桥接加速度检查拒绝目标，执行跟踪不足，后续输入租约超时。详见 [本次实机报告](servo_bridge/validation/20261023/REPORT.md)。
@@ -235,3 +275,8 @@ PYTHONNOUSERSITE=1 /usr/bin/python3 -m unittest discover -s servo_bridge/tests -
 本次已验证：实际 Servo 运行、真实日志回放、合成闭环、故障阻断、消息/单位/时间/默认关闭契约。待验证：实机微小绝对位置目标跟踪、首次保持/退出行为、正确夹爪模型、夹爪操控、工具/相机/桌面标定，以及采集 UI 与新路线的联调。近期继续用最小 SDK 桥接，长期可迁移到标准 ROS 驱动与 ros2_control 控制器，进一步统一反馈、速度/插补与停止语义。
 
 参考：[Humble Servo 官方教程](https://moveit.picknik.ai/humble/doc/examples/realtime_servo/realtime_servo_tutorial.html)、[Humble Servo 输出时间语义源码](https://github.com/moveit/moveit2/blob/humble/moveit_ros/moveit_servo/src/servo_calcs.cpp)、[PiPER 官方 SRDF](https://github.com/agilexrobotics/piper_ros/blob/humble/src/piper_moveit/piper_with_gripper_moveit/config/piper.srdf)、[固定版本 Gamepad_PiPER](https://github.com/kehuanjack/Gamepad_PiPER/tree/aa00c80e100d687a5f4a386b79b83ece06b3a30f)。
+
+
+## Servo 手柄采集入口
+
+已接入 `python -m e14.collect_data --teleop servo`，含实时相机预览、录制/标注和独立控制进程。详见 [SERVO_COLLECTION.md](SERVO_COLLECTION.md)。本轮仅离线测试；夹爪与自动返回尚未接入。

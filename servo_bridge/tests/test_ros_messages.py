@@ -13,6 +13,7 @@ except ImportError as exc:
 
 from servo_bridge.core import CommandGuard, Feedback, NAMES, load_config
 from servo_bridge.sources import SimSource
+from servo_bridge.execution import VelocityTarget
 
 
 class MessageTests(unittest.TestCase):
@@ -26,7 +27,8 @@ class MessageTests(unittest.TestCase):
             latest_status_received=time.monotonic(), cfg=cfg,
             feedback=feedback, guard=CommandGuard(cfg), source=source,
             socket=None, output_latched=False, seq=1, invalid_count=0,
-            relay_active=False,
+            relay_active=False, args=SimpleNamespace(execution_mode="servo-position"),
+            execution=VelocityTarget(cfg), policy=SimpleNamespace(active=False),
             event=lambda kind, **data: self.events.append({'event': kind, **data}),
             get_clock=lambda: SimpleNamespace(now=lambda: SimpleNamespace(nanoseconds=time.time_ns())))
         msg = JointTrajectory()
@@ -43,7 +45,7 @@ class MessageTests(unittest.TestCase):
         msg = self.setup()
         packets = []
         self.node.socket = SimpleNamespace(sendto=lambda data, address: packets.append(json.loads(data)))
-        self.node.args = SimpleNamespace(output_socket='fake-local-socket')
+        self.node.args = SimpleNamespace(output_socket='fake-local-socket', execution_mode='servo-position')
         self.node.policy = SimpleNamespace(active=True)
         self.node.latch_output = lambda reason: Runtime.latch_output(self.node, reason)
         msg.points[0].velocities = [.15] * 6
@@ -54,6 +56,19 @@ class MessageTests(unittest.TestCase):
         self.assertNotIn('positions', packets[0])
         Runtime.trajectory(self.node, msg)
         self.assertEqual(len(packets), 1)
+
+    def test_integrated_mode_smooths_raw_velocity_jump_before_final_guard(self):
+        msg = self.setup()
+        self.node.args.execution_mode = 'integrated-velocity'
+        self.node.policy.active = True
+        # A legal speed demand with an abrupt change: old ordering rejected
+        # it before the execution layer could enforce acceleration.
+        msg.points[0].velocities = [.06, 0., 0., 0., 0., 0.]
+        Runtime.trajectory(self.node, msg)
+        self.assertTrue(self.events[-1]['accepted'])
+        velocity = self.events[-1]['execution_velocities'][0]
+        self.assertLessEqual(velocity, .02 + 1e-10)
+        self.assertGreater(velocity, 0.)
 
     def test_zero_stamp_means_immediate_but_requires_current_lease(self):
         msg = self.setup()

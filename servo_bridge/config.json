@@ -9,6 +9,7 @@
   "maximum_joint_step_deg": 1.0,
   "maximum_joint_velocity_rad_s": 0.15,
   "maximum_joint_acceleration_rad_s2": 0.5,
+  "execution_velocity_time_constant_s": 0.15,
   "linear_speed_m_s": 0.01,
   "angular_speed_rad_s": 0.05,
   "linear_acceleration_m_s2": 0.1,

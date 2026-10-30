@@ -34,6 +34,7 @@ from e14.gamepad_kinematics import PiperKinematics
 from servo_bridge.core import CommandGuard, NAMES, STATUS, load_config
 from servo_bridge.sources import LogSource, SimSource, PassiveCan, synthetic_pad
 from servo_bridge.twist_policy import TwistPolicy
+from servo_bridge.execution import VelocityTarget
 
 
 class Runtime(Node):
@@ -49,6 +50,7 @@ class Runtime(Node):
             self.pad = PygamePad(mapping)
         self.policy = TwistPolicy(cfg, mapping)
         self.guard = CommandGuard(cfg)
+        self.execution = VelocityTarget(cfg)
         self.joints_pub = self.create_publisher(JointState, '/piper_servo/joint_states', 10)
         self.twist_pub = self.create_publisher(TwistStamped, '/piper_servo/twist', 10)
         self.scene_pub = self.create_publisher(PlanningScene, '/planning_scene', 10)
@@ -75,7 +77,7 @@ class Runtime(Node):
             self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
         self.hardware_output = 'external manually armed worker requested; not confirmed' if self.socket else False
         self.event('session', source=args.source, input=args.input, hardware_output=self.hardware_output,
-                   sdk_socket_requested=bool(args.output_socket), config=cfg,
+                   sdk_socket_requested=bool(args.output_socket), execution_mode=args.execution_mode, config=cfg,
                    note='Candidate trajectory is not hardware execution or training data')
 
     def event(self, kind, **kwargs):
@@ -108,6 +110,7 @@ class Runtime(Node):
         before = time.perf_counter()
         self.output_count += 1
         reason, raw = None, None
+        execution_q = execution_v = None
         stamp = msg.header.stamp.sec * 10**9 + msg.header.stamp.nanosec
         # Humble Servo deliberately uses stamp=0 ("begin immediately"). It is
         # not a Unix-epoch-stale command. Require a current input lease and a
@@ -129,15 +132,27 @@ class Runtime(Node):
                 raise ValueError('Expected one Servo trajectory point')
             if msg.header.frame_id not in ('', 'base_link'):
                 raise ValueError('Unexpected trajectory frame')
-            raw = self.guard.validate(list(msg.joint_names), q, v, feedback=self.feedback,
-                                      stamp_age_s=age, horizon_s=horizon)
+            if self.args.execution_mode == 'integrated-velocity':
+                self.execution.validate_candidate(list(msg.joint_names), q, v, self.feedback)
+                if self.policy.active:
+                    raw, execution_q, execution_v = self.execution.step(list(msg.joint_names), v,
+                        feedback=self.feedback, now=time.monotonic(), stamp_age_s=age, horizon_s=horizon)
+                else:
+                    self.execution.reset()
+                    raw = self.guard.validate(list(NAMES), self.feedback.q, [0.]*6,
+                        feedback=self.feedback, stamp_age_s=age, horizon_s=horizon)
+                    execution_q, execution_v = self.guard.last_q.copy(), np.zeros(6)
+            else:
+                raw = self.guard.validate(list(msg.joint_names), q, v, feedback=self.feedback,
+                                          stamp_age_s=age, horizon_s=horizon)
+                execution_q, execution_v = self.guard.last_q.copy(), self.guard.last_velocity.copy()
             if isinstance(self.source, SimSource):
-                self.source.target = self.guard.last_q.copy()
+                self.source.target = execution_q.copy()
             if self.socket:
                 # The worker independently checks real CAN, freshness, expiry,
                 # health, names, limits and the ongoing deadman lease.
                 data = {'version': 1, 'monotonic': time.monotonic(), 'joint_names': list(NAMES),
-                        'positions': self.guard.last_q.tolist(), 'velocities': self.guard.last_velocity.tolist(),
+                        'positions': execution_q.tolist(), 'velocities': execution_v.tolist(),
                         'deadman': bool(self.policy.active), 'servo_status': self.latest_status,
                         'status_monotonic': self.latest_status_received,
                         'horizon_s': horizon}
@@ -153,6 +168,8 @@ class Runtime(Node):
                    stamp_age_s=age, horizon_s=horizon, accepted=reason is None,
                    age_basis='header_stamp' if stamp else 'latest_input_lease; output_stamp_zero_begin_immediately',
                    rejection=reason, sdk_units_audit=raw,
+                   execution_positions=execution_q.tolist() if execution_q is not None else None,
+                   execution_velocities=execution_v.tolist() if execution_v is not None else None,
                    processing_ms=(time.perf_counter() - before) * 1000,
                    input_to_callback_ms=(time.monotonic() - self.latest_input) * 1000 if self.latest_input else None)
 
@@ -191,6 +208,11 @@ class Runtime(Node):
         was_active = self.policy.active
         twist = self.policy.step(pad, pose[:3, :3], dt,
                                  reference_may_advance=self.latest_status in (0, 1, 6))
+        if was_active and not self.policy.active:
+            # Reset the execution reference on release for both simulation and
+            # live output. A new deadman session starts at fresh measured q.
+            self.guard = CommandGuard(self.cfg)
+            self.execution.reset()
         if self.socket and was_active and not self.policy.active and not self.output_latched:
             # Release must not depend on a decelerating Servo candidate passing
             # the trajectory guard. The worker owns the commissioned hold.
@@ -200,7 +222,6 @@ class Runtime(Node):
                                               'status_monotonic': self.latest_status_received,
                                               'deadman': False}).encode(), self.args.output_socket)
                 self.relay_active = False
-                self.guard = CommandGuard(self.cfg)
                 self.event('relay_deadman_released')
             except OSError as exc:
                 self.latch_output(str(exc))
@@ -236,7 +257,7 @@ class Runtime(Node):
                    orientation_goal=self.policy.orientation.tolist() if self.policy.orientation is not None else None,
                    orientation_error_rad=float(error_angle) if error_angle is not None else None,
                    jacobian_condition=float(np.linalg.cond(jac)), status=self.latest_status,
-                   active=self.policy.active, original_monotonic=original.get('monotonic') if original else None,
+                   active=self.policy.active, gamepad=pad, original_monotonic=original.get('monotonic') if original else None,
                    original_ik_accepted=original.get('planner', {}).get('accepted') if original else None,
                    input_published=input_published,
                    tf_latest_position_gap_m=float(tf_position_error) if tf_position_error is not None else None,
@@ -284,6 +305,7 @@ class Runtime(Node):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config')
+    parser.add_argument('--parent-pid', type=int, help='Exit if the owning collection process disappears')
     parser.add_argument('--model-dir', default='models/piper_servo')
     parser.add_argument('--source', choices=('log', 'sim', 'can'), default='sim')
     parser.add_argument('--log')
@@ -293,6 +315,7 @@ def main():
     parser.add_argument('--duration', type=float, default=18.)
     parser.add_argument('--max-cycles', type=int)
     parser.add_argument('--output', default='outputs/servo_bridge/run')
+    parser.add_argument('--execution-mode', choices=('servo-position', 'integrated-velocity'), default='servo-position')
     parser.add_argument('--output-socket', help='Explicit future relay to a separately manually armed SDK worker')
     args = parser.parse_args()
     cfg = load_config(args.config)
@@ -323,7 +346,7 @@ def main():
     source = LogSource(args.log) if args.source == 'log' else SimSource(cfg) if args.source == 'sim' else PassiveCan(cfg['can_interface'])
     processes, handles = [], []
     from contextlib import nullcontext
-    event_file = (output / 'events.jsonl').open('w')
+    event_file = (output / 'events.jsonl').open('w', buffering=1)
     rclpy.init()
     node = None
     try:
@@ -342,6 +365,8 @@ def main():
             boot = time.monotonic()
             initial = None
             while time.monotonic() - boot < 15.:
+                if args.parent_pid and os.getppid() != args.parent_pid:
+                    raise RuntimeError('Owning collection process exited')
                 if any(p.poll() is not None for p in processes):
                     raise RuntimeError('A ROS process exited at startup; inspect its log')
                 try:
@@ -380,6 +405,8 @@ def main():
                 return (int(fields[13]) + int(fields[14])) / hz_ticks
             cpu_before = [cpu_seconds(p) for p in processes]
             while rclpy.ok():
+                if args.parent_pid and os.getppid() != args.parent_pid:
+                    raise RuntimeError('Owning collection process exited')
                 now = time.monotonic()
                 if args.source == 'log':
                     done = source.index >= len(source.rows)

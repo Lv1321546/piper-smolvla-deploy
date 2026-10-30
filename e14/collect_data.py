@@ -184,11 +184,23 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--open-width", type=float, default=.06, help="Full gripper opening in metres")
     parser.add_argument("--close-width", type=float, default=0., help="Closed gripper target in metres")
     parser.add_argument("--gripper-speed", type=float, default=.03, help="Manual target ramp, metres per second")
+    parser.add_argument('--teleop', choices=['servo'])
+    parser.add_argument('--execute', action='store_true', help='Explicit Servo SDK output; requires an existing operator lease')
+    parser.add_argument('--servo-arm-file', type=Path)
+    parser.add_argument('--servo-config', type=Path)
+    parser.add_argument('--gamepad-config', type=Path, default=ROOT/'gamepad.local.servo.json')
+    parser.add_argument('--run-seconds', type=float, default=300., help='Servo dashboard/session duration limit')
     args = parser.parse_args(argv)
     if args.episodes < 1:
         parser.error("--episodes must be positive")
     if args.restart_can and not args.initialize_can:
         parser.error("--restart-can requires --initialize-can")
+    if args.teleop == 'servo':
+        from e14.servo_collect import run_servo_collection
+        run_servo_collection(args)
+        return
+    if args.execute:
+        parser.error('--execute requires --teleop servo')
     if args.interactive:
         from e14.teaching_ui import run_interactive
         run_interactive(args)

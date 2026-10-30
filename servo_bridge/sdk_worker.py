@@ -127,6 +127,7 @@ class Worker:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config')
+    parser.add_argument('--parent-pid', type=int, help='Exit and request measured hold if collector disappears')
     parser.add_argument('--arm-file', required=True)
     parser.add_argument('--execute', action='store_true')
     parser.add_argument('--commission-hold', action='store_true', help='Supervised first test: send current measured joints once, observe 2s, then exit; no teleop socket')
@@ -184,6 +185,8 @@ def main():
         sock.settimeout(cfg['command_max_age_s'])
         print('SUPERVISED SDK OUTPUT ARMED. Six-joint JointCtrl only. Ctrl-C requests measured-position hold.', flush=True)
         while True:
+            if args.parent_pid and os.getppid() != args.parent_pid:
+                raise RuntimeError('Owning collection process exited')
             validate_arm(json.loads(arm_path.read_text()), cfg['can_interface'])
             try:
                 raw = sock.recv(8192)
