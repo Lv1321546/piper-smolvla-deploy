@@ -1,10 +1,10 @@
 """Protocol/safety regressions using synthetic feedback and a fake SDK only."""
-import json
 import math
-from pathlib import Path
 import socket
 import struct
 import time
+import tempfile
+from pathlib import Path
 import unittest
 from unittest.mock import patch
 
@@ -13,7 +13,7 @@ from scipy.spatial.transform import Rotation
 
 from servo_bridge.core import CommandGuard, Feedback, NAMES, load_config, ordered_values, sdk_units
 from servo_bridge.twist_policy import TwistPolicy
-from servo_bridge.sdk_worker import SDKJointWriter, Worker, validate_arm, ACK
+from servo_bridge.sdk_worker import SDKJointWriter, Worker
 from servo_bridge.sources import PassiveCan
 
 
@@ -225,19 +225,25 @@ class WorkerTests(unittest.TestCase):
                                     stop_requested=True), self.feedback)
         self.assertNotIn('joint', [c[0] for c in self.FakeSDK.calls])
 
-    def test_example_and_expired_arming_remain_closed(self):
-        example = json.loads((Path(__file__).parents[1] / 'arm.example.json').read_text())
-        with self.assertRaises(ValueError):
-            validate_arm(example, 'can0', now=100.)
-        armed = {k: True for k in ('operator_present', 'model_and_control_point_checked', 'measured_joint_hold_checked', 'only_one_can_writer')}
-        armed.update(expires_unix_s=110., can_interface='can0', acknowledgement=ACK)
-        validate_arm(armed, 'can0', now=100.)
-        armed['measured_joint_hold_checked'] = False
-        with self.assertRaises(ValueError):
-            validate_arm(armed, 'can0', now=100.)
-        validate_arm(armed, 'can0', now=100., commission_hold_only=True)
-        with self.assertRaises(ValueError):
-            validate_arm(armed, 'can0', now=111.)
+    def test_worker_requires_execute_before_hardware(self):
+        from servo_bridge.sdk_worker import main
+        with patch('sys.argv', ['sdk_worker']), patch('servo_bridge.sdk_worker.PassiveCan') as can, \
+                patch('servo_bridge.sdk_worker.SDKJointWriter') as sdk:
+            with self.assertRaises(SystemExit) as error:
+                main()
+            self.assertEqual(error.exception.code, 2)
+            can.assert_not_called()
+            sdk.assert_not_called()
+
+    def test_worker_needs_no_arm_file_but_still_checks_feedback(self):
+        from servo_bridge.sdk_worker import main
+        with tempfile.TemporaryDirectory() as directory, \
+                patch('sys.argv', ['sdk_worker', '--execute', '--socket', str(Path(directory)/'sdk.sock')]), \
+                patch('servo_bridge.sdk_worker.PassiveCan', side_effect=RuntimeError('fake CAN unavailable')), \
+                patch('servo_bridge.sdk_worker.SDKJointWriter') as sdk:
+            with self.assertRaisesRegex(RuntimeError, 'fake CAN unavailable'):
+                main()
+            sdk.assert_not_called()
 
 
 class PassiveReceiveTests(unittest.TestCase):

@@ -70,6 +70,19 @@ class ServoCollectionTests(unittest.TestCase):
   with patch('e14.servo_collect.PiperRobot') as robot:
    with self.assertRaises(ValueError):run_servo_collection(self.args)
    robot.assert_not_called()
+ def test_both_collectors_start_worker_without_authorization_file(self):
+  from e14.joint_collect import ServoProcess as JointProcess
+  for process in (ServoProcess,JointProcess):
+   with self.subTest(process=process.__module__):
+    args=SimpleNamespace(output=self.root,execute=True,servo_config=None,
+                         servo_arm_file=self.root/'does-not-exist.json')
+    b=process(args,self.robot.config);b.socket_path=str(self.root/'unused.sock')
+    with patch.object(b,'spawn',side_effect=RuntimeError('worker captured')) as spawn:
+     with self.assertRaisesRegex(RuntimeError,'worker captured'):b.start()
+     command=spawn.call_args.args[0]
+     self.assertIn('--execute',command)
+     self.assertNotIn('--arm-file',command)
+     self.assertNotIn(str(args.servo_arm_file),command)
  def test_telemetry_reader_retains_partial_json(self):
   args=SimpleNamespace(output=self.root,execute=False)
   b=ServoProcess(args,self.robot.config);b.path.mkdir(parents=True);b.trace.parent.mkdir()

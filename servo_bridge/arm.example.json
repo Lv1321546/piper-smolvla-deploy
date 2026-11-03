@@ -1,9 +1,0 @@
-{
-  "operator_present": false,
-  "model_and_control_point_checked": false,
-  "measured_joint_hold_checked": false,
-  "only_one_can_writer": false,
-  "expires_unix_s": 0,
-  "can_interface": "can0",
-  "acknowledgement": "I authorize six-joint JointCtrl and GripperCtrl only; no enable, mode, reset or emergency-stop commands"
-}

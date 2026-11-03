@@ -86,12 +86,10 @@ class ServoProcess:
         self.path.mkdir(parents=True, exist_ok=False)
         try:
             if self.args.execute:
-                from servo_bridge.sdk_worker import validate_arm
-                validate_arm(json.loads(self.args.servo_arm_file.read_text()), cfg['can_interface'])
                 if Path(self.socket_path).exists():
                     raise RuntimeError('SDK socket already exists; stop the other writer first')
                 command = [sys.executable,'-u','-m','servo_bridge.sdk_worker','--execute',
-                           '--arm-file',str(self.args.servo_arm_file.resolve()),'--parent-pid',str(os.getpid()),
+                           '--parent-pid',str(os.getpid()),
                            '--socket',self.socket_path]
                 if self.args.servo_config: command += ['--config',str(self.args.servo_config.resolve())]
                 self.spawn(command,'worker.log')
@@ -196,7 +194,7 @@ class ServoSession(TeachingSession):
             return
         if command=='record':
             if not (self.args.execute or self.args.mock):
-                raise RuntimeError('只读预览不可录制运动示教；实机执行需 --execute 和现场授权文件')
+                raise RuntimeError('只读预览不可录制运动示教；实机执行需 --execute')
             if self.fault:raise RuntimeError(self.fault)
             if self.status in {'review','finished','recording'}:return
             self.robot.get_feedback()
@@ -278,7 +276,6 @@ def run_servo_collection(args):
     if not 0<=args.preview_port<=65535:raise ValueError('Invalid preview port')
     if args.interactive:raise ValueError('--teleop servo replaces --interactive')
     if args.mock and args.execute:raise ValueError('--mock cannot be combined with --execute')
-    if args.execute and args.servo_arm_file is None:raise ValueError('--execute requires --servo-arm-file')
     if not math.isfinite(args.run_seconds) or args.run_seconds<=0:raise ValueError('Positive --run-seconds required')
     if args.mock and (args.initialize_can or args.restart_can):raise ValueError('Mock must not configure real CAN')
     robot=PiperRobot(config,mock=True) if args.mock else PassiveRobot(config)

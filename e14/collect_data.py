@@ -185,8 +185,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--close-width", type=float, default=0., help="Closed gripper target in metres")
     parser.add_argument("--gripper-speed", type=float, default=.03, help="Manual target ramp, metres per second")
     parser.add_argument('--teleop', choices=['servo'])
-    parser.add_argument('--execute', action='store_true', help='Explicit Servo SDK output; requires an existing operator lease')
-    parser.add_argument('--servo-arm-file', type=Path)
+    parser.add_argument('--execute', action='store_true', help='Enable real Servo SDK output')
+    parser.add_argument('--servo-arm-file', type=Path, help=argparse.SUPPRESS)  # Legacy option, ignored.
     parser.add_argument('--servo-config', type=Path, default=ROOT/'servo_bridge/config.cartesian.local.json')
     parser.add_argument('--servo-controller', choices=('cartesian', 'legacy'), default='cartesian')
     parser.add_argument('--orientation-mode', choices=('position', 'hold'), default='position')

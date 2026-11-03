@@ -14,7 +14,7 @@ sys.path.insert(0, str(ROOT))
 import numpy as np
 from e14.gamepad import PygamePad
 from servo_bridge.core import CommandGuard, NAMES, load_config
-from servo_bridge.sdk_worker import SDKJointWriter, Worker, validate_arm
+from servo_bridge.sdk_worker import SDKJointWriter, Worker
 from servo_bridge.sources import PassiveCan
 
 
@@ -33,12 +33,11 @@ def advance(q, velocity, axis, initial, dt=.05):
 def main():
     p = argparse.ArgumentParser(__doc__)
     p.add_argument('--execute', action='store_true')
-    p.add_argument('--arm-file', type=Path, required=True)
+    p.add_argument('--arm-file', type=Path, help=argparse.SUPPRESS)  # Legacy option, ignored.
     p.add_argument('--output', type=Path, required=True)
     args = p.parse_args()
     if not args.execute: p.error('Explicit --execute required')
     cfg = load_config()
-    validate_arm(json.loads(args.arm_file.read_text()), 'can0')
     args.output.mkdir(parents=True, exist_ok=False)
     lock = open('/tmp/piper-servo-sdk.sock.lock', 'a')
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -70,7 +69,6 @@ def main():
             deadline = time.monotonic() + 300.
             while time.monotonic() < deadline:
                 cycle = time.monotonic()
-                validate_arm(json.loads(args.arm_file.read_text()), 'can0')
                 feedback, _, snap = source.sample(cycle, .05)
                 state = pad.poll()
                 if not feedback.ready or not 0 <= time.monotonic()-feedback.received <= .15:
@@ -136,14 +134,12 @@ def main():
             if pad: pad.close()
             if source: source.close()
             lock.close()
-            lease = json.loads(args.arm_file.read_text()); lease['expires_unix_s']=0
-            args.arm_file.write_text(json.dumps(lease, indent=2))
             values = np.array(rows)
             result = {'reason':reason, 'error':error, 'joint_commands':commands,
                       'initial_q_deg':initial_feedback,
                       'final_q_deg':np.degrees(values[-1]).tolist() if len(values) else None,
                       'max_feedback_delta_deg':np.degrees(np.max(np.abs(values-values[0]),axis=0)).tolist() if len(values) else None,
-                      'lease_revoked':True}
+                      'output_closed':True}
             (args.output/'result.json').write_text(json.dumps(result,ensure_ascii=False,indent=2))
             event('finished', **result); print(json.dumps(result,ensure_ascii=False),flush=True)
 

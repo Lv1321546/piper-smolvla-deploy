@@ -1,8 +1,8 @@
-"""Opt-in, separately armed SDK writer for supervised commissioning only.
+"""Explicit --execute SDK writer with independent feedback and command checks.
 
 The ROS process uses system Python 3.10; this worker can run in the existing
 LeRobot Python 3.12. It receives local Unix datagrams, independently receives
-raw CAN feedback, and exposes JointCtrl only. Never auto-start this worker.
+raw CAN feedback, and exposes JointCtrl only. Collectors may start this worker only with explicit --execute.
 """
 import argparse
 import fcntl
@@ -16,24 +16,6 @@ import time
 import numpy as np
 from servo_bridge.core import CommandGuard, NAMES, load_config, sdk_units, vector
 from servo_bridge.sources import PassiveCan
-
-ACK = 'I authorize six-joint JointCtrl and GripperCtrl only; no enable, mode, reset or emergency-stop commands'
-
-
-def validate_arm(data, channel, now=None, *, commission_hold_only=False):
-    now = time.time() if now is None else now
-    keys = ('operator_present', 'model_and_control_point_checked', 'only_one_can_writer')
-    if not commission_hold_only:
-        keys += ('measured_joint_hold_checked',)
-    for key in keys:
-        if data.get(key) is not True:
-            raise ValueError(f'Output remains closed: {key} is not confirmed')
-    expires = data.get('expires_unix_s', 0)
-    if isinstance(expires, bool) or not isinstance(expires, (int, float)) or not math.isfinite(expires) or not now < expires <= now + 1800:
-        raise ValueError('Arming lease must expire within 30 minutes and be unexpired')
-    if data.get('can_interface') != channel or data.get('acknowledgement') != ACK:
-        raise ValueError('Arming acknowledgement / CAN interface mismatch')
-
 
 class SDKJointWriter:
     """Explicit construction is the only SDK entry point in this new route."""
@@ -167,7 +149,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config')
     parser.add_argument('--parent-pid', type=int, help='Exit and request measured hold if collector disappears')
-    parser.add_argument('--arm-file', required=True)
+    parser.add_argument('--arm-file', help=argparse.SUPPRESS)  # Legacy option, ignored.
     parser.add_argument('--execute', action='store_true')
     parser.add_argument('--commission-hold', action='store_true', help='Supervised first test: send current measured joints once, observe 2s, then exit; no teleop socket')
     parser.add_argument('--socket', default='/tmp/piper-servo-sdk.sock')
@@ -175,16 +157,14 @@ def main():
     if not args.execute:
         parser.error('Output remains closed without explicit --execute; SDK was not imported')
     cfg = load_config(args.config)
-    arm_path = Path(args.arm_file)
-    validate_arm(json.loads(arm_path.read_text()), cfg['can_interface'], commission_hold_only=args.commission_hold)
     sock_path = Path(args.socket)
     if sock_path.exists():
         parser.error('Socket path exists; verify no active writer before manual removal')
     lock = open(str(sock_path) + '.lock', 'a')
-    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    source = PassiveCan(cfg['can_interface'])
-    sock, writer, worker = None, None, None
+    source = sock = writer = worker = None
     try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        source = PassiveCan(cfg['can_interface'])
         # Passive readiness check before importing or constructing the SDK.
         deadline = time.monotonic() + 3.
         while True:
@@ -197,7 +177,6 @@ def main():
             if time.monotonic() > deadline:
                 raise RuntimeError('No fresh healthy enabled CAN/MOVE_J feedback; output remains closed')
             time.sleep(.02)
-        validate_arm(json.loads(arm_path.read_text()), cfg['can_interface'], commission_hold_only=args.commission_hold)
         writer = SDKJointWriter(cfg['can_interface'])
         if args.commission_hold:
             guard = CommandGuard(cfg)
@@ -226,7 +205,6 @@ def main():
         while True:
             if args.parent_pid and os.getppid() != args.parent_pid:
                 raise RuntimeError('Owning collection process exited')
-            validate_arm(json.loads(arm_path.read_text()), cfg['can_interface'])
             try:
                 raw = sock.recv(8192)
             except socket.timeout:
@@ -244,7 +222,8 @@ def main():
                 if writer:
                     writer.close()
             finally:
-                source.close()
+                if source:
+                    source.close()
                 if sock:
                     sock.close()
                     sock_path.unlink(missing_ok=True)

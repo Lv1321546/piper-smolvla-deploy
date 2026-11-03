@@ -12,12 +12,11 @@ cd /home/eureka/piper_ws/smolvla_deploy
 python -m servo_bridge.inspect_state --samples 10
 ```
 
-假定 CAN 已 UP/1Mbps、实机已 CAN/MOVE_J 且六关节使能，并按下文现场授权流程更新 `outputs/servo_bridge/arm.local.json`（临时测试文件已过期，不能直接重用）：
+假定 CAN 已 UP/1Mbps、实机已 CAN/MOVE_J 且六关节使能。使用 `--execute` 开启输出，无需授权文件或续期：
 
 ```bash
 # 终端 A：SDK worker，使用 lerobot 环境
-python -m servo_bridge.sdk_worker --execute \
-  --arm-file outputs/servo_bridge/arm.local.json
+python -m servo_bridge.sdk_worker --execute
 
 # 终端 B：系统 ROS 环境由 run.sh 隔离设置
 cd /home/eureka/piper_ws/smolvla_deploy
@@ -61,7 +60,7 @@ flowchart LR
     B --> C[MoveIt Servo 2.5.10]
     C --> D[轨迹守卫与审计日志]
     D --> E[默认：审计或合成关节模型]
-    D -.仅返场手动授权后.-> F[独立 Python 3.12 SDK worker]
+    D -.显式启动 --execute.-> F[独立 Python 3.12 SDK worker]
     F --> G[JointCtrl 六关节]
     H[只收不发的 SocketCAN 反馈] --> C
     H --> F
@@ -205,21 +204,15 @@ bash servo_bridge/run.sh --source can --input gamepad \
 ```
 
 5. 若姿态仍触发奇异性停止，先在现场调整到有余量的弯曲姿态，重新做只读核对。不要照抄合成模型的初始角度自动运动，也不要提高阈值来绕过停止。
-6. 用独立 SDK worker 做“一次当前关节目标保持”测试，再确认停止策略适用于本次接入。该测试只发一次六关节当前位置目标，观察 2 秒，不自动使能/切模式/开合爪。需要现场临时授权文件，见下文。
+6. 用独立 SDK worker 做“一次当前关节目标保持”测试，再确认停止策略适用于本次接入。该测试只发一次六关节当前位置目标，观察 2 秒，不自动使能/切模式/开合爪。通过 `--execute --commission-hold` 显式启动，见下文。
 7. 保持测试通过后，确认松开 LB、输入中断、程序退出和反馈丢失时的行为。第一次平移仅在一个方向上低速执行约 1 秒，观察是否持续前进并保持朝向；依次 X/Y/Z，再小角度旋转。先核对相邻周期轨迹、实际角度和实际速度，再延长时间或采集数据。
 
-### 输出授权与两个 Python 环境
+### 实机输出开关与两个 Python 环境
 
-**仓库没有已授权文件。** `arm.example.json` 的确认项均为 false、期限为 0；复制后不编辑仍会被拒绝。不要提前预填确认项，也不要把文件放入 Git。授权最长 30 分钟。
-
-现场复制到已忽略的目录：
-
-```bash
-mkdir -p outputs/servo_bridge
-cp servo_bridge/arm.example.json outputs/servo_bridge/arm.local.json
-```
-
-只有现场操作者核对完对应项目后，才设置 `operator_present`、`model_and_control_point_checked`、`only_one_can_writer`。`expires_unix_s` 填未来最多 30 分钟的 Unix 秒，可通过 `date +%s` 获取当前值。首次保持测试允许 `measured_joint_hold_checked=false`；连续遥控必须在实际确认保持后再改为 true。
+所有入口已取消授权 JSON 及有效期检查，直接使用 `--execute` 开启实机输出。不传此参数时，不启动 SDK 写入。
+旧命令里的 `--arm-file` / `--servo-arm-file` 兼容接受但忽略，不再读取文件；旧文件即使过期、丢失也不影响启动。
+LB 运动许可、实时反馈/指令超时、速度/加速度/跟踪限制和写入进程锁继续生效。
+采集入口会管理自己的 worker，不能另外启动第二个 worker。
 
 下面两类 worker 命令都属于**会发送关节指令的现场步骤**，不是只读检查；本次没有运行它们。
 
@@ -227,15 +220,13 @@ cp servo_bridge/arm.example.json outputs/servo_bridge/arm.local.json
 # 终端 A：使用原 LeRobot 环境；先做一次当前位置保持，然后退出
 conda activate lerobot
 cd /home/eureka/piper_ws/smolvla_deploy
-python -m servo_bridge.sdk_worker --execute --commission-hold \
-  --arm-file outputs/servo_bridge/arm.local.json
+python -m servo_bridge.sdk_worker --execute --commission-hold
 ```
 
-现场确认保持稳定后，再更新对应确认项并在终端 A 启动 worker：
+现场确认保持稳定后，在终端 A 启动 worker：
 
 ```bash
-python -m servo_bridge.sdk_worker --execute \
-  --arm-file outputs/servo_bridge/arm.local.json
+python -m servo_bridge.sdk_worker --execute
 ```
 
 终端 B 才连接实际输出：
@@ -259,7 +250,7 @@ SDK `JointCtrl` 将分成三个 CAN 帧发送，并不提供“电机已经到�
 - 现场按 worker 终端 **Ctrl+C** 同样请求上述保持后关闭连接。若反馈丢失/故障，软件不能验证位置保持，会关闭写入并报错；现场必须使用已验证的硬件停止流程。这里没有使用会导致阻尼下落的 `MotionCtrl_1` 软急停。
 - 也可在隔离的 ROS 环境调用 `ROS_DOMAIN_ID=83 ROS_LOCALHOST_ONLY=1 ros2 service call /servo_node/stop_servo std_srvs/srv/Trigger '{}'`；这是停止 Servo 计算，不能当作硬件急停。
 - 回退前先退出新路线的 runtime 和 worker，再使用原来的 `e14.gamepad_teleop` 和 `config.local.teleop.json` / `gamepad.local.teleop.json`。本次未更改旧控制逻辑或这些配置，也未修复旧实机 Cartesian 问题；回退只是保留对照。单独验证旧 joint 模式可按 [常用命令](常用命令.md) 操作，不能新旧同时写 CAN。
-- 无需卸载系统 MoveIt 或改 Conda 来回退。授权文件过期后保留关闭状态；下次现场重新检查并授权。
+- 无需卸载系统 MoveIt 或改 Conda 来回退。退出写入进程后关闭软件输出；下次使用 `--execute` 显式启动。
 
 ## 测试与后续工作
 

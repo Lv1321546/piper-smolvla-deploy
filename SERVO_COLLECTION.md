@@ -49,7 +49,7 @@ python -m e14.collect_data \
 关节 demo 的 24°/s / 8°/s 与 XYZ 平移的 mm/s 不能直接等同，末端速度与姿态、力臂和多个关节配合有关。
 两者执行层的关节速度/加速度上限相同；XYZ 模式还保留奇异性和姿态保持约束，因此不能保证所有姿态下与关节直控一样快。
 
-1. 按 [MOVEIT_SERVO.md](MOVEIT_SERVO.md) 完成 CAN/MOVE_J、关节使能和现场输出授权，更新 `outputs/servo_bridge/arm.local.json` 的有效期及确认项。采集入口不自动做这些操作。需要启用电脑 CAN 时可以添加 `--initialize-can`，它不是电机使能。
+1. 按 [MOVEIT_SERVO.md](MOVEIT_SERVO.md) 完成 CAN/MOVE_J 和关节使能。实机输出仅需 `--execute`，无需授权文件或续期。采集入口不自动做这些操作。需要启用电脑 CAN 时可以添加 `--initialize-can`，它不是电机使能。
 2. 关闭单独运行的旧遥操作、Servo runtime 和 worker。新采集命令会自行管理自己的两端子进程，不要再启动第二个 worker。
 3. 启动命令（会允许 LB 手柄控制实机）：
 
@@ -58,14 +58,13 @@ conda activate lerobot
 cd /home/eureka/piper_ws/smolvla_deploy
 python -m e14.collect_data \
   --config config.local.json --teleop servo --execute \
-  --servo-arm-file outputs/servo_bridge/arm.local.json \
   --gamepad-config gamepad.local.servo.json \
   --output data/piper_raw_servo \
   --task "Push the black foam block into the target area." \
   --episodes 3 --duration 30 --run-seconds 600
 ```
 
-`gamepad.local.servo.json` 对应系统 ROS Python 的 SDL GUID，不能直接替换成 Conda 手柄配置。每条最多 30 秒，整个进程最多 600 秒；输出授权应覆盖会话，临近会话结束不要再开始新一条。抓取任务还需要后续接入并验证夹爪，当前先用移动/推块联调。
+`gamepad.local.servo.json` 对应系统 ROS Python 的 SDL GUID，不能直接替换成 Conda 手柄配置。每条最多 30 秒，整个进程最多 600 秒；临近会话结束不要再开始新一条。抓取任务还需要后续接入并验证夹爪，当前先用移动/推块联调。
 
 不加 `--execute` 时只读预览、审计手柄，不输出运动，也不允许录制运动示教。不要同时传 `--interactive`；它是旧手拖入口。
 

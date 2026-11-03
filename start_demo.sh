@@ -15,7 +15,6 @@ cd -- "$(dirname -- "$0")"
 
 PY=${PIPER_DEMO_PYTHON:-$HOME/miniconda3/envs/lerobot/bin/python}
 CONFIG=config.local.json
-ARM_FILE=outputs/servo_bridge/arm.local.json
 SERVO_CONFIG=servo_bridge/config.local.json
 XYZ_CONTROLLER=${XYZ_CONTROLLER:-cartesian}
 XYZ_ORIENTATION=${XYZ_ORIENTATION:-position}
@@ -64,10 +63,9 @@ ok() { echo "[OK] $*"; }
 
 [ -x "$PY" ] || fail "找不到 Python: $PY"
 [ -f "$CONFIG" ] || fail "缺少 $CONFIG"
-[ -f "$ARM_FILE" ] || fail "缺少授权文件 $ARM_FILE"
 [ -f "$SERVO_CONFIG" ] || fail "缺少伺服配置 $SERVO_CONFIG"
 
-echo "== 1/7 检查是否已有采集进程 =="
+echo "== 1/6 检查是否已有采集进程 =="
 if pgrep -f '[e]14.collect_data|[e]14.collect_joint_demo|[e]14.gamepad_teleop|[s]ervo_bridge.sdk_worker|[s]ervo_bridge.runtime|[s]ervo_bridge.joint_runtime|[s]ervo_bridge.cartesian_runtime|[s]ervo_bridge.joint_start_pose' >/dev/null 2>&1; then
   fail "已有采集程序在运行，请先在原终端按 Q 或 Ctrl+C 停止"
 fi
@@ -76,12 +74,12 @@ if [ -e /tmp/piper-servo-sdk.sock ]; then
   fail "存在 SDK socket；请确认旧 worker 已退出，不自动删除运行锁或 socket"
 fi
 
-echo "== 2/7 检查相机 =="
+echo "== 2/6 检查相机 =="
 "$PY" -m e14.camera_check --config "$CONFIG" --timeout "$CAMERA_CHECK_TIMEOUT" \
   || fail "相机检查失败/超时；请查看上方具体原因，确认其他程序已退出后重试"
 ok "相机正常"
 
-echo "== 3/7 检查 CAN 数据 =="
+echo "== 3/6 检查 CAN 数据 =="
 "$PY" - <<'PY' || fail "CAN 无数据：检查机械臂电源、急停按钮、CAN 线"
 import socket, struct, time, sys
 s = socket.socket(socket.PF_CAN, socket.SOCK_RAW, socket.CAN_RAW)
@@ -101,7 +99,7 @@ sys.exit(1)
 PY
 ok "CAN 正常"
 
-echo "== 4/7 检查模式 / 使能 / 目标姿态 =="
+echo "== 4/6 检查模式 / 使能 / 目标姿态 =="
 "$PY" - "$SWITCH_CAN" "$SAFE_POSE" "$CHECK_ONLY" <<'PY' || fail "机械臂状态不适合启动，请按上面的提示处理后重试"
 import json
 import socket
@@ -258,38 +256,16 @@ PY
 ok "模式 / 使能 / 目标姿态正常"
 
 if [ "$CHECK_ONLY" -eq 1 ]; then
-  echo "== 自检完成：未移动、未刷新授权、未启动控制 =="
+  echo "== 自检完成：未移动、未启动控制 =="
   exit 0
 fi
 
-echo "== 5/7 刷新输出授权 =="
-"$PY" - "$RUN_SECONDS" <<'PY' || fail "授权刷新失败：检查授权文件的确认项"
-import json
-import sys
-import time
-
-p = 'outputs/servo_bridge/arm.local.json'
-d = json.load(open(p))
-need = ('operator_present', 'model_and_control_point_checked',
-        'measured_joint_hold_checked', 'only_one_can_writer')
-missing = [k for k in need if d.get(k) is not True]
-if missing:
-    print('以下安全确认项不是 true：', ', '.join(missing))
-    sys.exit(1)
-runtime = float(sys.argv[1])
-if not 0 < runtime < float('inf'):
-    raise ValueError('RUN_SECONDS 必须是正数')
-d['expires_unix_s'] = int(time.time() + runtime + 180)
-json.dump(d, open(p, 'w'), indent=2)
-print('授权有效至', time.strftime('%H:%M:%S', time.localtime(d['expires_unix_s'])))
-PY
-
-echo "== 6/7 以 5% 速度移动到安全起始姿态 =="
+echo "== 5/6 以 5% 速度移动到安全起始姿态 =="
 "$PY" -m servo_bridge.joint_start_pose --config "$CONFIG" --profile "$SERVO_CONFIG" \
-  --safe-pose "$SAFE_POSE" --arm-file "$ARM_FILE" --execute \
+  --safe-pose "$SAFE_POSE" --execute \
   || fail "起始移动未完成；已取消启动，请检查现场状态"
 
-echo "== 7/7 启动 Servo 采集 =="
+echo "== 6/6 启动 Servo 采集 =="
 echo "控制页面: http://127.0.0.1:8766"
 echo "按住 LB + 摇杆移动 XYZ；同时按住 RB 为精细档；仅按 RB 不移动。"
 echo "XYZ 控制器：$XYZ_CONTROLLER；姿态模式：$XYZ_ORIENTATION（position 允许小幅朝向变化，hold 保持朝向）。"
@@ -302,7 +278,6 @@ fi
 exec "$PY" -m e14.collect_data \
   --config "$CONFIG" \
   --teleop servo --execute \
-  --servo-arm-file "$ARM_FILE" \
   --servo-config "$SERVO_CONFIG" \
   --servo-controller "$XYZ_CONTROLLER" --orientation-mode "$XYZ_ORIENTATION" \
   --gamepad-config "$PAD_FILE" \

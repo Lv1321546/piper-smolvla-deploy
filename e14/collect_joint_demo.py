@@ -15,7 +15,7 @@ def main(argv=None):
     parser.add_argument('--run-seconds', type=float, default=600.)
     parser.add_argument('--preview-port', type=int, default=8766)
     parser.add_argument('--servo-config', type=Path, default=(Path('servo_bridge/config.joint.local.json') if Path('servo_bridge/config.joint.local.json').is_file() else Path('servo_bridge/config.joint.example.json')))
-    parser.add_argument('--servo-arm-file', type=Path, default=Path('outputs/joint_demo/arm.local.json'))
+    parser.add_argument('--servo-arm-file', type=Path, help=argparse.SUPPRESS)  # Legacy option, ignored.
     parser.add_argument('--gamepad-config', type=Path, default=(Path('gamepad.local.joint.json') if Path('gamepad.local.joint.json').is_file() else Path('gamepad.joint.example.json')))
     parser.add_argument('--execute', action='store_true')
     parser.add_argument('--mock', action='store_true')

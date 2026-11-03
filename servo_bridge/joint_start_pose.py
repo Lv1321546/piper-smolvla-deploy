@@ -95,15 +95,13 @@ def main():
     parser.add_argument('--config', required=True)
     parser.add_argument('--profile', required=True)
     parser.add_argument('--safe-pose', default=DEFAULT_POSE)
-    parser.add_argument('--arm-file', required=True)
+    parser.add_argument('--arm-file', help=argparse.SUPPRESS)  # Legacy option, ignored.
     parser.add_argument('--execute', action='store_true')
     args = parser.parse_args()
     cfg = load_config(args.profile)
     target, _, _, _ = validate_pose(args.safe_pose, cfg)
     if not args.execute:
         parser.error('起始移动需要 --execute')
-    from servo_bridge.sdk_worker import validate_arm
-    validate_arm(json.loads(Path(args.arm_file).read_text()), cfg['can_interface'])
     from e14.joint_collect import PassiveRobot
     from piper_sdk import C_PiperInterface_V2
     config = json.loads(Path(args.config).read_text())

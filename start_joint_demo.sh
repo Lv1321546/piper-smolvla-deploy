@@ -14,7 +14,6 @@ if [[ ! -f "$PROFILE" && -z "${JOINT_DEMO_PROFILE:-}" ]]; then
 fi
 PAD_FILE=gamepad.local.joint.json
 [[ -f "$PAD_FILE" ]] || PAD_FILE=gamepad.joint.example.json
-ARM_FILE=outputs/joint_demo/arm.local.json
 OUTPUT=${JOINT_DEMO_OUTPUT:-data/piper_raw_joint}
 TASK=${TASK:-"Push the black foam block."}
 EPISODES=${EPISODES:-3}
@@ -57,20 +56,18 @@ if [[ -e /tmp/piper-servo-sdk.sock ]]; then
   exit 1
 fi
 
-echo "== 2/5 只读检查配置、起始姿态、授权、CAN/MOVE_J/使能和相机 =="
+echo "== 2/5 只读检查配置、起始姿态、CAN/MOVE_J/使能和相机 =="
 "$PY" - "$CONFIG" "$PROFILE" "$RUN_SECONDS" "$SAFE_POSE" <<'PY'
 import json
 import math
 from pathlib import Path
 import sys
-import time
 
 from e14.cameras import CameraReader
 from e14.joint_collect import PassiveRobot
 from servo_bridge.core import CommandGuard, load_config
 from servo_bridge.joint_policy import JointPolicy
 from servo_bridge.joint_start_pose import validate_pose
-from servo_bridge.sdk_worker import validate_arm
 
 config = json.loads(Path(sys.argv[1]).read_text())
 cfg = load_config(sys.argv[2])
@@ -85,11 +82,6 @@ if cfg['can_interface'] != config['robot']['can_interface']:
     raise ValueError('CAN 接口配置不一致')
 if cfg['joint_limits_deg'] != config['robot']['joint_limits_deg']:
     raise ValueError('关节配置与采集配置不一致，请先核对两个配置文件')
-# Reuse only previously recorded commissioning acknowledgements, not their
-# expiry. No original authorization file is changed.
-arm = json.loads(Path('outputs/servo_bridge/arm.local.json').read_text())
-arm['expires_unix_s'] = int(time.time() + runtime + 120)
-validate_arm(arm, cfg['can_interface'])
 robot, cameras = PassiveRobot(config), CameraReader(config['cameras'])
 try:
     robot.connect()
@@ -110,31 +102,16 @@ finally:
 PY
 
 if [[ "$CHECK_ONLY" == 1 ]]; then
-  echo "自检完成。未启动控制，未刷新授权，未移动机械臂。"
+  echo "自检完成。未启动控制，未移动机械臂。"
   exit 0
 fi
 
-echo "== 3/5 生成独立模型参数和本次授权 =="
+echo "== 3/5 生成独立模型参数 =="
 /usr/bin/python3 -m servo_bridge.prepare --config "$PROFILE" \
   --mesh-source models/piper_servo/meshes --output models/piper_joint_servo
-"$PY" - "$ARM_FILE" "$RUN_SECONDS" "$PROFILE" <<'PY'
-import json
-from pathlib import Path
-import sys
-import time
-from servo_bridge.core import load_config
-from servo_bridge.sdk_worker import validate_arm
-arm = json.loads(Path('outputs/servo_bridge/arm.local.json').read_text())
-arm['expires_unix_s'] = int(time.time() + float(sys.argv[2]) + 120)
-validate_arm(arm, load_config(sys.argv[3])['can_interface'])
-path = Path(sys.argv[1])
-path.parent.mkdir(parents=True, exist_ok=True)
-path.write_text(json.dumps(arm, indent=2) + '\n')
-PY
-
 echo "== 4/5 低速移动到起始姿态 =="
 "$PY" -m servo_bridge.joint_start_pose --config "$CONFIG" --profile "$PROFILE" \
-  --safe-pose "$SAFE_POSE" --arm-file "$ARM_FILE" --execute
+  --safe-pose "$SAFE_POSE" --execute
 
 echo "== 5/5 启动关节直控采集 =="
 echo "左杆左右 J1，左杆前后 J2，右杆上下 J3，方向键左右 J4，上下 J5，右杆左右 J6。"
@@ -142,6 +119,6 @@ echo "按住 LB 允许；同时按住 RB 为精细档（仅按 RB 不移动）�
 echo "控制页面：http://127.0.0.1:$PREVIEW_PORT"
 exec "$PY" -m e14.collect_joint_demo --config "$CONFIG" --execute \
   --gamepad-config "$PAD_FILE" \
-  --servo-config "$PROFILE" --servo-arm-file "$ARM_FILE" \
+  --servo-config "$PROFILE" \
   --output "$OUTPUT" --task "$TASK" --episodes "$EPISODES" \
   --duration "$DURATION" --run-seconds "$RUN_SECONDS" --preview-port "$PREVIEW_PORT"
