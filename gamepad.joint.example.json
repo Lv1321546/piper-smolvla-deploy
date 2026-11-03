@@ -1,0 +1,44 @@
+{
+  "_note": "关节直控 demo 独立 DS4 配置：按现场反馈反转六路关节输入；轴编号、按键及夹爪扳机保持原样。",
+  "gamepad": {
+    "index": 0,
+    "guid": "030000004c050000cc09000011810000",
+    "deadzone": 0.12,
+    "trigger_min": -1.0,
+    "trigger_max": 1.0,
+    "axis_map": {
+      "left_x": 0,
+      "left_y": 1,
+      "right_x": 3,
+      "right_y": 4,
+      "left_trigger": 2,
+      "right_trigger": 5
+    },
+    "button_map": {
+      "a": 0,
+      "b": 1,
+      "x": 3,
+      "y": 2,
+      "lb": 4,
+      "rb": 5,
+      "back": 8,
+      "start": 9
+    },
+    "linear_speed_m_s": 0.12,
+    "angular_speed_rad_s": 0.45,
+    "joint_speed_deg_s": 24.0,
+    "workspace_radius_m": 0.15,
+    "allow_rotation": true,
+    "invert_y": true,
+    "invert_pitch": true,
+    "gripper_speed_m_s": 0.05,
+    "input_directions": {
+      "left_x": -1,
+      "left_y": -1,
+      "right_x": -1,
+      "right_y": -1,
+      "hat_x": -1,
+      "hat_y": -1
+    }
+  }
+}

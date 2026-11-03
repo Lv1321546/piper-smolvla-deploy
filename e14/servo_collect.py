@@ -22,9 +22,10 @@ from e14.teaching_ui import Dashboard, TeachingSession, PAGE as TEACHING_PAGE
 
 ROOT = Path(__file__).resolve().parents[1]
 PAGE = TEACHING_PAGE.replace('PiPER 抓取示教采集', 'PiPER Servo 手柄采集')
-PAGE = PAGE.replace('<button data-c="open">O 张开</button><button data-c="close">C 闭合</button>', '<span>夹爪开合尚未接入；当前只记录实际开口。</span>')
+PAGE = PAGE.replace('<button data-c="open">O 张开</button><button data-c="close">C 闭合</button>', '<span>夹爪：按住 LB + B/RT 张爪，A/LT 闭爪；实际开口持续记录。</span>')
 PAGE = PAGE.replace('<button data-c="home">H 返回并张爪</button>', '')
-PAGE = PAGE.replace('CAN 模式可用 O/C 测试夹爪，此时不要手拖关节。手拖抓取采集需要固件支持示教期间的软件夹爪；录制结束保持夹爪当前状态。', '持续按 LB + 摇杆控制 XYZ，RB 精细速度；松开 LB 保持。手柄 X 开始/结束，Y 成功，Back 失败。录制开始不自动张爪或回零。')
+PAGE = PAGE.replace("s.mock?'模拟设备':'真实设备',", "s.mock?'模拟设备':'真实设备',s.cartesian_mode_label??'',s.cartesian_planner?.message??'',")
+PAGE = PAGE.replace('CAN 模式可用 O/C 测试夹爪，此时不要手拖关节。手拖抓取采集需要固件支持示教期间的软件夹爪；录制结束保持夹爪当前状态。', '持续按 LB + 摇杆控制 XYZ，同时按住 RB 为精细档；仅按 RB 不移动，松开 LB 保持。夹爪用 B/RT 张爪、A/LT 闭爪（也要按住 LB）。手柄 X 开始/结束，Y 成功，Back 失败。录制开始不自动张爪或回零。')
 
 
 class PassiveRobot:
@@ -98,10 +99,14 @@ class ServoProcess:
                     self.alive()
                     if time.monotonic()>deadline: raise RuntimeError('SDK worker startup timed out')
                     time.sleep(.05)
-            command = ['bash','servo_bridge/run.sh','--source','can','--input','gamepad',
+            controller = getattr(self.args, 'servo_controller', 'cartesian')
+            runner = 'servo_bridge/run.sh' if controller == 'legacy' else 'servo_bridge/run_cartesian.sh'
+            command = ['bash',runner,'--source','can','--input','gamepad',
                        '--gamepad-config',str(self.args.gamepad_config.resolve()),
                        '--execution-mode','integrated-velocity','--duration',str(self.args.run_seconds),
                        '--output',str((self.path/'trace').resolve()),'--parent-pid',str(os.getpid())]
+            if controller == 'cartesian':
+                command += ['--orientation-mode', getattr(self.args, 'orientation_mode', 'position')]
             if self.args.servo_config: command += ['--config',str(self.args.servo_config.resolve())]
             if self.args.execute: command += ['--output-socket',self.socket_path]
             self.spawn(command,'runtime.log')
@@ -134,7 +139,9 @@ class ServoProcess:
                 row=json.loads(line);events.append(row)
                 if row['event']=='input': self.latest=row
                 if row['event']=='relay_latched_closed': raise RuntimeError(row['reason'])
-                if row['event']=='servo_status' and row['value'] in (2,4,5):
+                if (row['event']=='servo_status' and row['value'] in (2,4,5)
+                        and not (getattr(self.args, 'servo_controller', 'cartesian') == 'cartesian'
+                                 and row['value'] == 5 and row.get('recoverable') is True)):
                     raise RuntimeError('Servo halt: '+row['label'])
         if self.latest and time.monotonic()-self.latest['monotonic']>.5:
             raise RuntimeError('Servo telemetry stale')
@@ -183,11 +190,15 @@ class ServoSession(TeachingSession):
     def __init__(self,args,robot,cameras,dashboard,bridge,**kwargs):
         super().__init__(args,robot,cameras,dashboard,startup_gripper=False,**kwargs)
         self.bridge=bridge;self.old_buttons=None;self.fault=None
-        self.message='Servo 手柄已连接。LB + 摇杆移动；R 开始录制；不自动张爪或返回。'
+        self.message='Servo 手柄已连接。LB + 摇杆移动；B/RT 张爪、A/LT 闭爪（按住 LB）；R 开始录制；不自动张爪或返回。'
 
     def handle(self,command):
         if command in {'open','close','home'}:
-            self.message='此 Servo 入口尚未接入夹爪/自动返回，不会发送这些指令。';return
+            if command=='home':
+                self.message='本入口不提供自动返回。'
+            else:
+                self.message='页面 O/C 未接入；请用手柄 B/RT 张爪、A/LT 闭爪（按住 LB）。'
+            return
         if command=='record':
             if not (self.args.execute or self.args.mock):
                 raise RuntimeError('只读预览不可录制运动示教；实机执行需 --execute 和现场授权文件')
@@ -203,19 +214,29 @@ class ServoSession(TeachingSession):
 
     def recording_metadata(self):
         return {'mode':'moveit_servo_gamepad','execution_mode':'integrated-velocity',
+                'controller':getattr(self.args, 'servo_controller', 'cartesian'),
+                'orientation_mode':getattr(self.args, 'orientation_mode', 'position'),
                 'teleop_trace':str(self.bridge.trace) if self.bridge.trace else None,
-                'execute':self.args.execute,'gripper_control':False,
+                'execute':self.args.execute,'gripper_control':bool(self.args.execute or self.args.mock),
                 'operator_events':'events.jsonl','label_semantics':'next_state'}
 
     def publish(self,frame_index=None):
         super().publish(frame_index)
         state=dict(self.dashboard.state)
         state['warnings']=[x for x in state['warnings'] if not x.startswith('H 返回未启用')]
-        state['gripper_status']='只读开口；尚未接入控制'
+        state['gripper_status']='手柄 B/RT 张爪、A/LT 闭爪（按住 LB）；记录实际开口'
         state['servo']=self.bridge.latest
         state['teleop_execute']=bool(self.args.execute)
+        planner = (self.bridge.latest or {}).get('planner', {})
+        state['cartesian_planner'] = planner
+        mode = getattr(self.args, 'orientation_mode', 'position')
+        state['cartesian_mode_label'] = ('XYZ 旧版固定姿态' if getattr(self.args, 'servo_controller', 'cartesian') == 'legacy'
+                                        else 'XYZ v2：保持朝向（2°余量）' if mode == 'hold'
+                                        else 'XYZ v2：位置优先（允许朝向变化 ≤15°）')
+        if planner.get('message') and self.status != 'recording':
+            state['message'] = planner['message']
         if self.status=='recording':
-            state['message']='正在录制 Servo 手柄示教；空格/X 结束，S/Y 成功，F/Back 失败。夹爪控制未接入。'
+            state['message']='正在录制 Servo 手柄示教；空格/X 结束，S/Y 成功，F/Back 失败。夹爪 B/RT 张、A/LT 闭（按住 LB）。'
         if self.fault:state['warnings'].append(self.fault)
         if not (self.args.execute or self.args.mock):state['warnings'].append('只读预览，运动输出关闭')
         self.dashboard.update(state,(self.camera_frame or {}).get('images',{}))

@@ -28,3 +28,7 @@ gamepad.local*.json
 id_rsa*
 id_ed25519*
 .DS_Store
+
+servo_bridge/config*.local.json
+
+.vscode/*.db*

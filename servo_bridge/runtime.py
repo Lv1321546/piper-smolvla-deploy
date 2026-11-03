@@ -71,6 +71,7 @@ class Runtime(Node):
         self.socket = None
         self.output_latched = False
         self.relay_active = False
+        self.gripper_cmd = None
         if args.output_socket:
             if args.source != 'can' or args.input != 'gamepad':
                 raise ValueError('SDK relay is only allowed with passive CAN feedback + live gamepad; no log/synthetic input')
@@ -156,6 +157,8 @@ class Runtime(Node):
                         'deadman': bool(self.policy.active), 'servo_status': self.latest_status,
                         'status_monotonic': self.latest_status_received,
                         'horizon_s': horizon}
+                if self.gripper_cmd is not None:
+                    data['gripper'] = self.gripper_cmd
                 self.socket.sendto(json.dumps(data).encode(), self.args.output_socket)
                 self.relay_active = bool(self.policy.active)
         except (ValueError, OSError) as exc:
@@ -225,6 +228,20 @@ class Runtime(Node):
                 self.event('relay_deadman_released')
             except OSError as exc:
                 self.latch_output(str(exc))
+        # Gripper follows the gamepad_teleop convention: B / right trigger opens,
+        # A / left trigger closes, and it only moves while the LB deadman is held.
+        grip_axis = (float(pad.get('axes', {}).get('right_trigger', 0.))
+                     - float(pad.get('axes', {}).get('left_trigger', 0.)))
+        buttons = pad.get('buttons', {})
+        if buttons.get('a'):
+            grip_axis = -1.
+        if buttons.get('b'):
+            grip_axis = 1.
+        self.gripper_cmd = None
+        if self.policy.active and abs(grip_axis) > .05:
+            low, high = self.cfg['gripper_limits_m']
+            width = min(high, max(low, float(feedback.width) + grip_axis * self.cfg['gripper_speed_m_s'] * dt))
+            self.gripper_cmd = {'width_m': width, 'effort': int(self.cfg['gripper_effort'])}
         msg = TwistStamped()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = 'base_link'
@@ -253,6 +270,7 @@ class Runtime(Node):
         error_angle = np.linalg.norm(Rotation.from_matrix(self.policy.orientation @ pose[:3, :3].T).as_rotvec()) if self.policy.orientation is not None else None
         self.event('input', seq=self.seq, elapsed_s=elapsed, feedback_source=feedback.source,
                    measured_q_rad=feedback.q.tolist(), measured_pose=pose.tolist(), jaw_width_m=feedback.width,
+                   gripper_command=self.gripper_cmd,
                    feedback_age_s=time.monotonic() - feedback.received, twist=twist.tolist(),
                    orientation_goal=self.policy.orientation.tolist() if self.policy.orientation is not None else None,
                    orientation_error_rad=float(error_angle) if error_angle is not None else None,

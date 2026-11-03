@@ -5,5 +5,5 @@
   "only_one_can_writer": false,
   "expires_unix_s": 0,
   "can_interface": "can0",
-  "acknowledgement": "I authorize six-joint JointCtrl only; no enable, mode, reset, gripper or emergency-stop commands"
+  "acknowledgement": "I authorize six-joint JointCtrl and GripperCtrl only; no enable, mode, reset or emergency-stop commands"
 }

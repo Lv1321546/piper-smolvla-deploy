@@ -1,4 +1,5 @@
 """ROS-system-side heading policy; the SDK worker does not need SciPy."""
+import math
 import numpy as np
 from scipy.spatial.transform import Rotation
 from servo_bridge.core import vector
@@ -12,6 +13,10 @@ class TwistPolicy:
     """
     def __init__(self, cfg, mapping=None):
         self.cfg, self.mapping = cfg, mapping or {}
+        self.fine_scale = cfg.get('fine_speed_scale', .25)
+        if (isinstance(self.fine_scale, bool) or not isinstance(self.fine_scale, (int, float)) or
+                not math.isfinite(self.fine_scale) or not 0 < self.fine_scale <= 1):
+            raise ValueError('fine_speed_scale must be finite and in (0, 1]')
         signs = self.mapping.get('input_directions', {})
         if (not isinstance(signs, dict) or set(signs) - {'left_x', 'left_y', 'right_x', 'right_y', 'hat_x', 'hat_y'} or
                 any(isinstance(v, bool) or v not in (-1, 1) for v in signs.values())):
@@ -57,7 +62,8 @@ class TwistPolicy:
         lx, ly, rx, ry = [v * signs.get(k, 1) for k, v in zip(
             ('left_x', 'left_y', 'right_x', 'right_y'), values)]
         hx, hy = hat * [signs.get('hat_x', 1), signs.get('hat_y', 1)]
-        fine = .25 if buttons.get('rb') else 1.
+        # This point is reachable only while LB is held: RB alone never moves.
+        fine = self.fine_scale if buttons.get('rb') else 1.
         demand = np.r_[[-ly, -lx if self.mapping.get('invert_y', True) else lx, -ry],
                        [hx, -hy if self.mapping.get('invert_pitch', True) else hy, rx]]
         demand[:3] *= self.cfg['linear_speed_m_s'] * fine
@@ -82,6 +88,6 @@ class TwistPolicy:
             correction = error / norm * magnitude
         twist = self.velocity.copy()
         twist[3:] += correction
-        limit = self.cfg['angular_speed_rad_s']
+        limit = self.cfg['angular_speed_rad_s'] * fine
         twist[3:] *= min(1., limit / max(np.linalg.norm(twist[3:]), 1e-12))
         return twist

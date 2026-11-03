@@ -17,7 +17,7 @@ import numpy as np
 from servo_bridge.core import CommandGuard, NAMES, load_config, sdk_units, vector
 from servo_bridge.sources import PassiveCan
 
-ACK = 'I authorize six-joint JointCtrl only; no enable, mode, reset, gripper or emergency-stop commands'
+ACK = 'I authorize six-joint JointCtrl and GripperCtrl only; no enable, mode, reset or emergency-stop commands'
 
 
 def validate_arm(data, channel, now=None, *, commission_hold_only=False):
@@ -51,6 +51,13 @@ class SDKJointWriter:
             raise ValueError('Six integer SDK targets required')
         self.sdk.JointCtrl(*raw)
 
+    def gripper(self, raw, effort):
+        if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+            raise ValueError('Gripper opening must be a non-negative integer in 0.001 mm')
+        if isinstance(effort, bool) or not isinstance(effort, int) or not 0 < effort <= 5000:
+            raise ValueError('Gripper effort must be integer SDK units 1..5000')
+        self.sdk.GripperCtrl(raw, effort, 0x01, 0x00)
+
     def close(self):
         self.sdk.DisconnectPort()
 
@@ -77,14 +84,24 @@ class Worker:
         if packet.get('stop_requested') is True:
             self.hold(feedback)
             raise RuntimeError(f"Relay requested stop: {packet.get('reason', 'unspecified')}")
-        if packet.get('servo_status') not in (0, 1, 6):
-            raise ValueError('Servo warning/halt/collision state forbids transmission')
         status_stamp = packet.get('status_monotonic')
         if (isinstance(status_stamp, bool) or not isinstance(status_stamp, (int, float)) or
                 not math.isfinite(status_stamp) or not 0 <= now - status_stamp <= self.cfg['command_max_age_s']):
             raise ValueError('Servo status is missing, stale or future')
         if not feedback.ready:
             raise ValueError('Requires already enabled, healthy CAN/MOVE_J; no mode or enable is sent')
+        # XYZ v2 may request a measured-position HOLD at a geometric boundary.
+        # This accepts no supplied target or gripper command, never relabels
+        # status=5 as healthy, and cannot resume motion before real status clears.
+        if (packet.get('servo_status') == 5 and packet.get('geometry_hold') is True
+                and packet.get('deadman') is False):
+            if any(key in packet for key in ('joint_names', 'positions', 'velocities', 'gripper')):
+                raise ValueError('Geometry hold must not contain motion or gripper targets')
+            self.hold(feedback)
+            self.last_packet = timestamp
+            return False
+        if packet.get('servo_status') not in (0, 1, 6):
+            raise ValueError('Servo warning/halt/collision state forbids transmission')
         if packet.get('deadman') is not True:
             self.hold(feedback)
             self.last_packet = timestamp
@@ -92,10 +109,32 @@ class Worker:
         raw = self.guard.validate(packet['joint_names'], packet['positions'], packet['velocities'],
                                   feedback=feedback, stamp_age_s=now - timestamp,
                                   horizon_s=packet['horizon_s'], now=now)
+        gripper = self._gripper_command(packet)
         self.writer.joint(raw)
+        if gripper is not None:
+            self.writer.gripper(*gripper)
         self.last_packet = timestamp
         self.moved = True
         return True
+
+    def _gripper_command(self, packet):
+        command = packet.get('gripper')
+        if command is None:
+            return None
+        if not isinstance(command, dict):
+            raise ValueError('Invalid gripper command')
+        width = command.get('width_m')
+        effort = command.get('effort', self.cfg.get('gripper_effort', 500))
+        low, high = self.cfg.get('gripper_limits_m', [0., .07])
+        if (isinstance(width, bool) or not isinstance(width, (int, float)) or
+                not math.isfinite(width) or not low - 1e-6 <= width <= high + 1e-6):
+            raise ValueError('Gripper width outside configured limits')
+        if isinstance(effort, bool) or not isinstance(effort, int) or not 1 <= effort <= 5000:
+            raise ValueError('Gripper effort must be integer SDK units 1..5000')
+        raw = round(width * 1_000_000)
+        if not low - 1e-6 <= raw / 1_000_000 <= high + 1e-6:
+            raise ValueError('Rounded gripper command outside configured limits')
+        return raw, effort
 
     def hold(self, feedback):
         """One measured-position JointCtrl, only after this worker moved.

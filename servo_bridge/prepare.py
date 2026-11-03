@@ -58,7 +58,11 @@ def prepare(output, mesh_source, cfg):
                  cartesian_command_in_topic='/piper_servo/twist',
                  joint_command_in_topic='/piper_servo/jog',
                  status_topic='/piper_servo/status',
-                 command_out_topic='/piper_servo/candidate_trajectory')
+                 command_out_topic='/piper_servo/candidate_trajectory',
+                 # Full command scale (upstream panda profile halves it) and a
+                 # tighter joint-limit margin so teleop does not stop early.
+                 scale={'linear': 1.0, 'rotational': 1.0, 'joint': 1.0},
+                 joint_limit_margin=0.05)
     # Deliberately retain upstream singularity/collision thresholds and checks.
     params = {'robot_description': urdf, 'robot_description_semantic': srdf,
               'robot_description_planning': {'joint_limits': limits}, 'moveit_servo': servo}

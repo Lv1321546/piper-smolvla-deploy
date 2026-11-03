@@ -56,6 +56,10 @@ class CameraReader:
             for key in ("connect_timeout_s", "join_timeout_s"):
                 if key in config and (isinstance(config[key], bool) or not isinstance(config[key], (int, float)) or not math.isfinite(config[key]) or config[key] <= 0):
                     raise ValueError(f"cameras.{name}.{key} must be positive")
+            if "connect_retries" in config:
+                retries = config["connect_retries"]
+                if isinstance(retries, bool) or not isinstance(retries, int) or retries < 1:
+                    raise ValueError(f"cameras.{name}.connect_retries must be a positive integer")
         devices = [str(c.get("device")) for c in self.config.values()]
         if not self.mock and len(set(devices)) != len(devices):
             raise ValueError("Multiple camera names must not point to the same device")
@@ -67,14 +71,42 @@ class CameraReader:
     def connect(self):
         if self._connected:
             return
-        if any(thread.is_alive() for thread in self._threads):
-            raise RuntimeError("Previous camera thread is still blocked; restart the process before reconnecting")
         self._stop.clear()
         self._frames.clear()
         self._errors.clear()
         if self.mock:
             self._connected = True
             return
+        last_error = None
+        # Local opt-in: default keeps the single-shot contract used by tests.
+        retries = max(1, max(int(c.get("connect_retries", 1)) for c in self.config.values()))
+        for attempt in range(retries):
+            if attempt:
+                # A failed cap.read() can block inside the driver. Wait for its
+                # owner thread to exit before reopening the same device.
+                deadline = time.monotonic() + 20
+                while any(t.is_alive() for t in self._threads) and time.monotonic() < deadline:
+                    time.sleep(.1)
+                self._threads = [t for t in self._threads if t.is_alive()]
+                if self._threads:
+                    raise RuntimeError("Previous camera thread is still blocked; restart the process before reconnecting")
+                self._captures.clear()
+                self._stop.clear()
+                self._frames.clear()
+                self._errors.clear()
+            try:
+                self._connect_once()
+                return
+            except (TimeoutError, RuntimeError) as exc:
+                last_error = exc
+                self.close()
+                if attempt < retries - 1:
+                    time.sleep(.8)
+        raise last_error
+
+    def _connect_once(self):
+        if any(t.is_alive() for t in self._threads):
+            raise RuntimeError("Previous camera thread is still blocked; restart the process before reconnecting")
         import cv2
         factory = self._capture_factory or cv2.VideoCapture
         try:
@@ -85,6 +117,9 @@ class CameraReader:
                     capture.release()
                     raise RuntimeError(f"Could not open camera {name}: {config['device']}")
                 self._captures[name] = capture
+                if config.get("fourcc"):
+                    # Some UVC cameras need MJPG when USB bandwidth is limited.
+                    capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*config["fourcc"]))
                 capture.set(cv2.CAP_PROP_FRAME_WIDTH, config["width"])
                 capture.set(cv2.CAP_PROP_FRAME_HEIGHT, config["height"])
                 capture.set(cv2.CAP_PROP_FPS, config["fps"])
