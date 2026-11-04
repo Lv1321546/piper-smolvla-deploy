@@ -1,4 +1,4 @@
-"""Local, single-camera teaching dashboard. HTTP threads never command hardware.
+"""Local, named-camera teaching dashboard. HTTP threads never command hardware.
 
 O/C command only the gripper. K records a reference pose; H explicitly returns
 the six arm joints outside recording using the existing motion checks. Neither
@@ -30,19 +30,21 @@ PAGE = r'''<!doctype html><html lang="zh-CN"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>PiPER 采集</title>
 <style>body{background:#10151d;color:#e8edf5;font:16px system-ui;margin:24px auto;max-width:1120px;padding:0 16px}h1{font-size:24px}main{display:grid;grid-template-columns:minmax(0,2fr) minmax(280px,1fr);gap:20px}img{width:100%;background:#000;border-radius:10px}button{background:#24374c;color:white;border:1px solid #526981;border-radius:7px;padding:12px;margin:4px;cursor:pointer}button:disabled{opacity:.4;cursor:default}#message{white-space:pre-wrap;color:#ffd88a;min-height:64px}pre{white-space:pre-wrap;font:14px monospace}#badge{padding:8px;border-radius:6px;background:#24374c}small{color:#a8b8c8}@media(max-width:760px){main{grid-template-columns:1fr}}</style>
 <h1>PiPER 抓取示教采集 <span id="badge">连接中</span></h1>
-<main><section><img src="/stream" alt="腕上相机实时画面"><p id="message"></p><small>按键仅在此页面获得焦点时有效。Q 退出软件不会自动松爪；不是硬件急停。</small></section>
+<main><section><div id="cameras"><img src="/stream" alt="相机实时画面"></div><p id="message"></p><small>按键仅在此页面获得焦点时有效。Q 退出软件不会自动松爪；不是硬件急停。</small></section>
 <section><div><button data-c="open">O 张开</button><button data-c="close">C 闭合</button></div>
 <div><button data-c="record">R 开始录制</button><button data-c="finish">空格 结束</button></div>
 <div><button data-c="success">S 成功并保存</button><button data-c="failure">F 失败并保存</button><button data-c="unknown">U 暂不标注</button></div>
 <div><button data-c="save_home">K 记录初始姿态</button><button data-c="home">H 返回并张爪</button></div>
 <button data-c="quit">Q 退出</button><pre id="stats"></pre><p id="warnings" style="white-space:pre-wrap;color:#ffb5b5"></p><details><summary>运行详情</summary><pre id="debug"></pre></details>
 <small>CAN 模式可用 O/C 测试夹爪，此时不要手拖关节。手拖抓取采集需要固件支持示教期间的软件夹爪；录制结束保持夹爪当前状态。</small></section></main>
-<script>const token=__TOKEN__;let status='';
-async function command(c){try{let r=await fetch('/command',{method:'POST',headers:{'Content-Type':'application/json','X-Teaching-Token':token},body:JSON.stringify({command:c})});if(!r.ok)throw Error(await r.text());}catch(e){document.querySelector('#message').textContent=e.message}}
+<script>const token=__TOKEN__,sessionId=__SESSION_ID__;let status='',commandError='';
+async function command(c){try{let r=await fetch('/command',{method:'POST',headers:{'Content-Type':'application/json','X-Teaching-Token':token},body:JSON.stringify({command:c})});if(!r.ok)throw Error(r.status===403?'页面会话已过期，请刷新后重新操作。指令未执行。':await r.text());commandError='';}catch(e){commandError=e.message;document.querySelector('#message').textContent=commandError}}
 document.querySelectorAll('button').forEach(b=>b.onclick=()=>command(b.dataset.c));
 const keys={o:'open',c:'close',r:'record',' ':'finish',s:'success',f:'failure',u:'unknown',k:'save_home',h:'home',q:'quit'};
-document.addEventListener('keydown',e=>{if(e.repeat||e.ctrlKey||e.metaKey||e.altKey||['INPUT','TEXTAREA'].includes(e.target.tagName))return;const c=keys[e.key.toLowerCase()];if(c){e.preventDefault();command(c)}});
-async function refresh(){try{let r=await fetch('/state',{cache:'no-store'});let s=await r.json();status=s.status;document.querySelector('#badge').textContent=s.status_label;document.querySelector('#badge').style.background=status==='recording'?'#a82035':'#24374c';document.querySelector('#message').textContent=s.message;
+const physicalKeys={KeyO:'open',KeyC:'close',KeyR:'record',Space:'finish',KeyS:'success',KeyF:'failure',KeyU:'unknown',KeyK:'save_home',KeyH:'home',KeyQ:'quit'};
+document.addEventListener('keydown',e=>{if(e.repeat||e.ctrlKey||e.metaKey||e.altKey||['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName)||e.target.isContentEditable)return;const c=physicalKeys[e.code]??keys[e.key.toLowerCase()];if(c){e.preventDefault();command(c)}});
+async function refresh(){try{let r=await fetch('/state',{cache:'no-store'});let s=await r.json();if(s.session_id!==sessionId){location.reload();return}status=s.status;document.querySelector('#badge').textContent=s.status_label;document.querySelector('#badge').style.background=status==='recording'?'#a82035':'#24374c';document.querySelector('#message').textContent=commandError||s.message;
+const views=document.querySelector('#cameras'),names=s.camera_names??[];if(names.length&&views.dataset.names!==JSON.stringify(names)){views.replaceChildren();views.style.display='grid';views.style.gridTemplateColumns=names.length>1?'repeat(2,minmax(0,1fr))':'1fr';views.style.gap='12px';for(const name of names){const f=document.createElement('figure');f.style.margin='0';const caption=document.createElement('figcaption');caption.textContent=s.camera_labels?.[name]??name;const img=document.createElement('img');img.alt=caption.textContent;img.src='/stream/'+encodeURIComponent(name);f.append(caption,img);views.append(f)}views.dataset.names=JSON.stringify(names)}
 document.querySelector('#stats').textContent=[s.mock?'模拟设备':'真实设备',s.ctrl_mode_label??'','实际开口：'+(s.gripper_width_mm??'无新反馈')+' mm','目标开口：'+(s.gripper_target_mm??'未发送新目标')+' mm','夹爪：'+(s.gripper_status??'等待反馈'),'当前/最近记录：'+s.recorded_frames+' 帧','本次已标注：'+s.saved_episodes+' 条','图像更新于：'+Math.max(0,...Object.values(s.image_age_ms??{}))+' ms 前',s.episode?'记录：'+s.episode:''].join('\n');document.querySelector('#warnings').textContent=(s.warnings??[]).join('\n');document.querySelector('#debug').textContent=JSON.stringify(s,null,2);document.querySelectorAll('button').forEach(b=>{let c=b.dataset.c;b.disabled=(['home','save_home','record'].includes(c)&&['recording','returning'].includes(status))||(c==='record'&&['review','finished'].includes(status))});}
 catch(e){document.querySelector('#message').textContent='采集程序连接已断开，请检查终端。'}setTimeout(refresh,250)}refresh();</script></html>'''
 
@@ -56,8 +58,10 @@ class Dashboard:
         self.lock = threading.Lock()
         self.stop = threading.Event()
         self.image = None
+        self.images = {}
         self.state = {"status": "preparing", "status_label": "准备中", "message": "等待设备"}
         self.token = secrets.token_urlsafe(24)
+        self.session_id = secrets.token_hex(12)
         dashboard = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -75,12 +79,21 @@ class Dashboard:
 
             def do_GET(self):
                 if self.path == "/":
-                    self.reply(200, page.replace("__TOKEN__", json.dumps(dashboard.token)).encode(), "text/html; charset=utf-8")
+                    html=page.replace("__TOKEN__", json.dumps(dashboard.token)).replace('__SESSION_ID__',json.dumps(dashboard.session_id))
+                    self.reply(200, html.encode(), "text/html; charset=utf-8")
                 elif self.path == "/state":
                     with dashboard.lock:
                         state = dict(dashboard.state)
+                        state['session_id'] = dashboard.session_id
                     self.reply(200, json.dumps(state, ensure_ascii=False, allow_nan=False).encode(), "application/json")
-                elif self.path == "/stream":
+                elif self.path == "/stream" or self.path.startswith('/stream/'):
+                    from urllib.parse import unquote
+                    name = unquote(self.path[len('/stream/'):]) if self.path.startswith('/stream/') else None
+                    with dashboard.lock:
+                        available = name is None or name in dashboard.images
+                    if not available:
+                        self.reply(404,b'Unknown camera')
+                        return
                     self.send_response(200)
                     self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
                     self.send_header("Cache-Control", "no-store")
@@ -88,7 +101,7 @@ class Dashboard:
                     try:
                         while not dashboard.stop.is_set():
                             with dashboard.lock:
-                                rgb = dashboard.image
+                                rgb = dashboard.image if name is None else dashboard.images.get(name)
                             if rgb is not None:
                                 stream = io.BytesIO()
                                 Image.fromarray(rgb).save(stream, format="JPEG", quality=80)
@@ -138,6 +151,8 @@ class Dashboard:
     def update(self, state, images):
         with self.lock:
             self.state = dict(state)
+            self.state['camera_names'] = list(images)
+            self.images = dict(images)
             self.image = next(iter(images.values())) if images else None
 
     def drain(self):
@@ -435,6 +450,7 @@ class TeachingSession:
                                "recorded_frames": frame_index if frame_index is not None else self.last_frame_count,
                                "episode": str(self.active_path or self.review_path or ""),
                                "saved_episodes": self.completed, "image_age_ms": image_ages,
+                               "camera_labels": {name: c.get('label',name) for name,c in self.robot.config['cameras'].items()},
                                "joint_angles_deg": None if feedback is None else feedback["state"][:6],
                                "gripper_width_mm": None if feedback is None else round(feedback["state"][6] * 1000, 2),
                                "gripper_target_mm": None if self.gripper.target is None else round(self.gripper.target * 1000, 2),
@@ -513,6 +529,9 @@ class TeachingSession:
             self.review_path, self.status = path, "review"
             self.last_frame_count = manifest['frames']
             self.message = f"已录 {manifest['frames']} 帧，夹爪保持当前状态。S 成功 / F 失败 / U 暂不标注。"
+            if manifest.get('stop_reason') == 'duration_limit':
+                self.message += f" 已达到单条录制上限 {self.args.duration:g} 秒；此后的动作未录入本条。"
+                print(self.message, flush=True)
             if self.requested_outcome:
                 self._label(self.requested_outcome)
         except (ValueError, RuntimeError, OSError) as exc:

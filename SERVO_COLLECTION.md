@@ -95,3 +95,8 @@ python -m e14.export_dataset \
 ```
 
 先联调少量数据再批量录制，检查抖动、图像模糊、夹爪状态和真实运动方向。模拟数据与真实数据分目录保存。
+
+
+## 双相机及回放
+
+双视角采集见 [DUAL_CAMERA_DEMO.md](DUAL_CAMERA_DEMO.md)，关节平滑回放见 [JOINT_REPLAY.md](JOINT_REPLAY.md)。所有入口只需 --execute，无需授权 JSON 或续期。

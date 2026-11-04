@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Independent joint demo. Does not edit or invoke start_demo.sh.
-# ./start_joint_demo.sh           preflight -> 5% startup pose -> joint collection
+# ./start_joint_demo.sh           preflight -> CAN takeover -> 5% startup pose -> collection
 # ./start_joint_demo.sh --check   passive preflight only; no CAN commands or file writes
 # ./start_joint_demo.sh --mock    UI/collection simulation; no CAN, ROS or gamepad
 set -euo pipefail
@@ -17,8 +17,9 @@ PAD_FILE=gamepad.local.joint.json
 OUTPUT=${JOINT_DEMO_OUTPUT:-data/piper_raw_joint}
 TASK=${TASK:-"Push the black foam block."}
 EPISODES=${EPISODES:-3}
-DURATION=${DURATION:-30}
-RUN_SECONDS=${RUN_SECONDS:-600}
+DURATION=${DURATION:-600}
+RUN_SECONDS=${RUN_SECONDS:-1500}
+CAMERA_CHECK_TIMEOUT=${CAMERA_CHECK_TIMEOUT:-30}
 PREVIEW_PORT=${PREVIEW_PORT:-8766}
 SAFE_POSE=${SAFE_POSE:-"-5.6 90.2 -35.5 -17.4 51.2 -25.5"}
 CHECK_ONLY=0
@@ -47,7 +48,7 @@ if [[ "$MOCK" == 1 ]]; then
 fi
 
 echo "== 1/5 检查重复控制进程和残留 socket =="
-if pgrep -f '[e]14.collect_data|[e]14.collect_joint_demo|[e]14.gamepad_teleop|[s]ervo_bridge.sdk_worker|[s]ervo_bridge.runtime|[s]ervo_bridge.joint_runtime|[s]ervo_bridge.joint_start_pose' >/dev/null; then
+if pgrep -f '[e]14.collect_data|[e]14.collect_joint_demo|[e]14.replay_joint|[e]14.gamepad_teleop|[s]ervo_bridge.sdk_worker|[s]ervo_bridge.runtime|[s]ervo_bridge.joint_runtime|[s]ervo_bridge.cartesian_runtime|[s]ervo_bridge.joint_start_pose|[s]ervo_bridge.prepare_control' >/dev/null; then
   echo "已有控制/采集程序；请在原终端退出后重试。" >&2
   exit 1
 fi
@@ -56,15 +57,15 @@ if [[ -e /tmp/piper-servo-sdk.sock ]]; then
   exit 1
 fi
 
-echo "== 2/5 只读检查配置、起始姿态、CAN/MOVE_J/使能和相机 =="
+echo "== 2/5 只读检查配置、起始姿态、CAN 反馈和相机 =="
+"$PY" -m e14.camera_check --config "$CONFIG" --timeout "$CAMERA_CHECK_TIMEOUT"
 "$PY" - "$CONFIG" "$PROFILE" "$RUN_SECONDS" "$SAFE_POSE" <<'PY'
 import json
 import math
 from pathlib import Path
 import sys
+import time
 
-from e14.cameras import CameraReader
-from e14.joint_collect import PassiveRobot
 from servo_bridge.core import CommandGuard, load_config
 from servo_bridge.joint_policy import JointPolicy
 from servo_bridge.joint_start_pose import validate_pose
@@ -82,24 +83,11 @@ if cfg['can_interface'] != config['robot']['can_interface']:
     raise ValueError('CAN 接口配置不一致')
 if cfg['joint_limits_deg'] != config['robot']['joint_limits_deg']:
     raise ValueError('关节配置与采集配置不一致，请先核对两个配置文件')
-robot, cameras = PassiveRobot(config), CameraReader(config['cameras'])
-try:
-    robot.connect()
-    state = robot.get_feedback()['state']
-    import numpy as np
-    q = np.radians(state[:6])
-    bounds = CommandGuard(cfg).limits
-    if np.any(q < bounds[:, 0]) or np.any(q > bounds[:, 1]):
-        raise ValueError('当前角度超出配置/模型范围，请先人工处理')
-    print('当前关节角：', [round(v, 2) for v in state[:6]])
-    print('当前夹爪开口：%.1f mm' % (state[6] * 1000))
-    cameras.connect()
-    cameras.read()
-    print('CAN/MOVE_J/使能、反馈和相机正常；未发送运动、模式或使能命令。')
-finally:
-    cameras.close()
-    robot.disconnect()
 PY
+
+CONTROL_CHECK=--preflight
+if [[ "$CHECK_ONLY" == 1 ]]; then CONTROL_CHECK=--check; fi
+"$PY" -m servo_bridge.prepare_control --config "$CONFIG" --profile "$PROFILE" "$CONTROL_CHECK"
 
 if [[ "$CHECK_ONLY" == 1 ]]; then
   echo "自检完成。未启动控制，未移动机械臂。"
@@ -109,7 +97,9 @@ fi
 echo "== 3/5 生成独立模型参数 =="
 /usr/bin/python3 -m servo_bridge.prepare --config "$PROFILE" \
   --mesh-source models/piper_servo/meshes --output models/piper_joint_servo
-echo "== 4/5 低速移动到起始姿态 =="
+echo "== 4/5 CAN 接管并低速移动到起始姿态 =="
+"$PY" -m servo_bridge.prepare_control --config "$CONFIG" --profile "$PROFILE" \
+  --execute
 "$PY" -m servo_bridge.joint_start_pose --config "$CONFIG" --profile "$PROFILE" \
   --safe-pose "$SAFE_POSE" --execute
 
@@ -117,8 +107,8 @@ echo "== 5/5 启动关节直控采集 =="
 echo "左杆左右 J1，左杆前后 J2，右杆上下 J3，方向键左右 J4，上下 J5，右杆左右 J6。"
 echo "按住 LB 允许；同时按住 RB 为精细档（仅按 RB 不移动）；B/RT 张爪；A/LT 闭爪；X 开始/结束；Y 成功；Back 失败。"
 echo "控制页面：http://127.0.0.1:$PREVIEW_PORT"
+echo "单条录制上限 $DURATION 秒；X 开始/结束录制，Y 成功、Back 失败；整个手柄会话上限 $RUN_SECONDS 秒。"
 exec "$PY" -m e14.collect_joint_demo --config "$CONFIG" --execute \
-  --gamepad-config "$PAD_FILE" \
-  --servo-config "$PROFILE" \
+  --gamepad-config "$PAD_FILE" --servo-config "$PROFILE" \
   --output "$OUTPUT" --task "$TASK" --episodes "$EPISODES" \
   --duration "$DURATION" --run-seconds "$RUN_SECONDS" --preview-port "$PREVIEW_PORT"

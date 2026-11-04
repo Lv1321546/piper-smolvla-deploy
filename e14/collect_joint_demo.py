@@ -11,8 +11,8 @@ def main(argv=None):
     parser.add_argument('--output', type=Path, default=Path('data/piper_raw_joint'))
     parser.add_argument('--task', default='Push the black foam block.')
     parser.add_argument('--episodes', type=int, default=3)
-    parser.add_argument('--duration', type=float, default=30.)
-    parser.add_argument('--run-seconds', type=float, default=600.)
+    parser.add_argument('--duration', type=float, default=600., help='单条录制时长上限（秒），可用 X 提前结束')
+    parser.add_argument('--run-seconds', type=float, default=1500., help='整个手柄控制会话的时长上限（秒）')
     parser.add_argument('--preview-port', type=int, default=8766)
     parser.add_argument('--servo-config', type=Path, default=(Path('servo_bridge/config.joint.local.json') if Path('servo_bridge/config.joint.local.json').is_file() else Path('servo_bridge/config.joint.example.json')))
     parser.add_argument('--servo-arm-file', type=Path, help=argparse.SUPPRESS)  # Legacy option, ignored.

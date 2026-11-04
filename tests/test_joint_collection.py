@@ -70,6 +70,17 @@ class JointCollectionTests(unittest.TestCase):
   with patch('e14.joint_collect.PiperRobot') as robot:
    with self.assertRaises(ValueError):run_servo_collection(self.args)
    robot.assert_not_called()
+ def test_geometry_hold_does_not_end_session_but_collision_does(self):
+  args=SimpleNamespace(output=self.root,execute=False)
+  b=ServoProcess(args,self.robot.config);b.path.mkdir(parents=True);b.trace.parent.mkdir()
+  try:
+   for status in (2,5,3,4):
+    if b.reader:b.reader.close();b.reader=None
+    b.trace.write_text(json.dumps(dict(event='servo_status',value=status,label='test',recoverable=True))+'\n')
+    if status in (2,5):self.assertEqual(len(b.poll()),1)
+    else:
+     with self.assertRaises(RuntimeError):b.poll()
+  finally:b.close()
  def test_telemetry_reader_retains_partial_json(self):
   args=SimpleNamespace(output=self.root,execute=False)
   b=ServoProcess(args,self.robot.config);b.path.mkdir(parents=True);b.trace.parent.mkdir()
@@ -78,5 +89,14 @@ class JointCollectionTests(unittest.TestCase):
   import time
   with b.trace.open('a') as f:f.write(str(time.monotonic())+'}\n')
   self.assertEqual(len(b.poll()),1);b.close()
+ def test_exited_child_reports_underlying_error_in_terminal_message(self):
+  args=SimpleNamespace(output=self.root,execute=False)
+  bridge=ServoProcess(args,self.robot.config);bridge.path.mkdir(parents=True)
+  log=bridge.path/'runtime.log';log.write_text('Traceback\nRuntimeError: Measured feedback is stale\n')
+  handle=log.open('a')
+  bridge.processes=[SimpleNamespace(poll=lambda:1)];bridge.handles=[handle]
+  try:
+   with self.assertRaisesRegex(RuntimeError,'Measured feedback is stale'):bridge.alive()
+  finally:handle.close()
 
 if __name__=='__main__':unittest.main()

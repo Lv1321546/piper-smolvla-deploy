@@ -27,7 +27,8 @@ class CartesianPolicy:
         defaults = dict(cartesian_orientation_drift_rad=math.radians(15),
                         cartesian_hold_drift_rad=math.radians(2),
                         cartesian_joint_margin_rad=.10, cartesian_lookahead_s=.20,
-                        cartesian_damping=.025, cartesian_orientation_weight=.15)
+                        cartesian_damping=.025, cartesian_orientation_weight=.15,
+                        cartesian_velocity_smoothing_weight=.05)
         for key, default in defaults.items():
             value = cfg.get(key, default)
             if (isinstance(value, bool) or not isinstance(value, (float, int)) or
@@ -95,15 +96,28 @@ class CartesianPolicy:
                              [self.cfg['angular_acceleration_rad_s2']]*3]
         self.twist += np.clip(request-self.twist, -acceleration*dt, acceleration*dt)
         neutral_motion = np.linalg.norm(request) < 1e-10
-        # Neutral never runs a centering/null-space motion. In position mode,
-        # accepting the measured heading also avoids springing back after a jog.
-        if neutral_motion and np.max(abs(self.previous)) < 1e-8:
+        # Brake directly in joint velocity space. An IK solve at zero input
+        # can redistribute the remaining speed between joints and twitch.
+        if neutral_motion:
+            velocity = self.previous + np.clip(-self.previous,
+                -self.gate.acceleration*dt, self.gate.acceleration*dt)
+            direction_state = np.where(velocity >= 0, np.maximum(q, reference), np.minimum(q, reference))
+            coast = velocity*self.cfg.get('execution_velocity_time_constant_s', .15)
+            stopping = direction_state + velocity*abs(velocity)/(2*self.gate.acceleration) + coast
+            blocked = ((velocity > 0) & (stopping > self.kin.high-self.joint_margin_rad) |
+                       (velocity < 0) & (stopping < self.kin.low+self.joint_margin_rad))
+            if np.any(blocked):
+                self.reset_motion()
+                return self._pause('停止距离接近边界，保持当前位置。',
+                                   [f'joint{i+1}' for i in np.flatnonzero(blocked)])
+            self.previous = velocity.copy()
             self.twist[:] = 0
             if self.mode == 'position':
                 self.orientation = rotation.copy()
-            self.diagnostics.update(message='输入回中，保持当前位置。', requested_twist=request.tolist(),
-                                    achieved_twist=[0.]*6, constrained=False)
-            return np.zeros(6)
+            self.diagnostics.update(message='输入回中，平滑停止并保持当前位置。',
+                requested_twist=request.tolist(), achieved_twist=(jac@velocity).tolist(),
+                constrained=False, braking=bool(np.any(velocity)))
+            return velocity
         envelope = self.orientation_drift_rad if self.mode == 'position' else self.hold_drift_rad
         if reference_may_advance and np.linalg.norm(request[3:]) > 1e-8:
             proposed = Rotation.from_rotvec(self.twist[3:]*dt).as_matrix() @ self.orientation
@@ -131,13 +145,17 @@ class CartesianPolicy:
         upper_position = self.kin.high - self.joint_margin_rad
         distance_low = np.maximum(0., np.minimum(q, reference)-lower_position)
         distance_high = np.maximum(0., upper_position-np.maximum(q, reference))
+        # Include the downstream velocity filter's coasting time in the soft
+        # boundary. The independent hard position and collision guards remain.
+        lookahead = max(self.lookahead_s,
+                        2*self.cfg.get('execution_velocity_time_constant_s', .15)+2*dt)
         low = np.maximum.reduce([np.full(6, -speed),
                                  -np.sqrt(2*acceleration*distance_low),
-                                 -distance_low/self.lookahead_s,
+                                 -distance_low/lookahead,
                                  self.previous-acceleration*dt])
         high = np.minimum.reduce([np.full(6, speed),
                                   np.sqrt(2*acceleration*distance_high),
-                                  distance_high/self.lookahead_s,
+                                  distance_high/lookahead,
                                   self.previous+acceleration*dt])
         limiting = [f'joint{i+1}' for i in range(6)
                     if min(distance_low[i], distance_high[i]) < speed*self.lookahead_s]
@@ -153,7 +171,11 @@ class CartesianPolicy:
             desired = np.zeros(6)
         else:
             desired = twist.copy()
-            desired[3:] += error * self.cfg['orientation_hold_gain_s_inv']
+            if self.mode == 'hold' or np.linalg.norm(twist[3:]) > 1e-6:
+                correction = error.copy()
+                if np.linalg.norm(correction) <= self.cfg['orientation_hold_deadband_rad']:
+                    correction[:] = 0
+                desired[3:] += correction * self.cfg['orientation_hold_gain_s_inv']
         linear_scale = self.cfg['linear_speed_m_s']
         angular_scale = self.cfg['angular_speed_rad_s']
         task = np.vstack([jac[:3]*speed/linear_scale,
@@ -167,8 +189,11 @@ class CartesianPolicy:
             preference[:] = 0
         matrix = np.vstack([task, self.damping*np.eye(6)])
         target = np.r_[goal, self.damping*preference]
-        hessian = matrix.T @ matrix
-        rhs = matrix.T @ target
+        # Prefer a continuous joint solution when several joint combinations
+        # produce the same requested Cartesian motion.
+        continuity = self.velocity_smoothing_weight
+        hessian = matrix.T @ matrix + continuity*np.eye(6)
+        rhs = matrix.T @ target + continuity*(self.previous/speed)
         horizon = max(dt, self.lookahead_s)
         angular_prediction = jac[3:] * speed * horizon
         permitted = max(envelope, float(np.linalg.norm(error)))
@@ -225,6 +250,8 @@ class CartesianPolicy:
                                 orientation_error_rad=float(np.linalg.norm(error)),
                                 limiting_joints=limiting, constrained=constrained,
                                 progress=progress, lateral_speed_m_s=lateral,
+                                orientation_limit_rad=envelope,
+                                joint_margin_rad=self.joint_margin_rad,
                                 solver_iterations=int(getattr(result, 'nit', 0)))
         return velocity
 

@@ -39,7 +39,8 @@ class VelocityTarget:
             raise ValueError('Servo velocity demand exceeds limit')
         period = self.cfg['publish_period_s']
         if self.last_time is not None and not .5*period <= now-self.last_time <= self.cfg['command_max_age_s']:
-            raise ValueError('Execution cadence stale or too fast')
+            raise ValueError(f'Execution cadence stale or too fast: interval={now-self.last_time:.6f}s; '
+                             f'allowed=[{.5*period:.6f}, {self.cfg["command_max_age_s"]:.6f}]s')
         dt = period if self.last_time is None else min(now-self.last_time, period)
         # Filter feedback/smoothing-induced candidate velocity ripple before
         # ramp limiting. Deadman release resets this memory; no buffered motion.

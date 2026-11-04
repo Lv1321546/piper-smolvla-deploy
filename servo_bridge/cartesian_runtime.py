@@ -31,11 +31,32 @@ from e14.gamepad_kinematics import PiperKinematics
 from servo_bridge.core import CommandGuard, NAMES, STATUS, load_config
 from servo_bridge.sources import LogSource, SimSource, PassiveCan, synthetic_pad
 from servo_bridge.cartesian_policy import CartesianPolicy
+from servo_bridge.hold_to_home import HoldToHomePolicy, load_home_reference
+from servo_bridge.ui_commands import ControlMailbox
+from servo_bridge.geometry_recovery import GeometryRecovery, GEOMETRY_STATUSES
 from servo_bridge.execution import VelocityTarget
 from servo_bridge.candidate_cadence import CandidateCadence
 
 
 def cartesian_synthetic_pad(elapsed, scenario):
+    if scenario == 'keyboard-reset':
+        pad = synthetic_pad(0.)
+        if .5 <= elapsed < 2.5:
+            pad['buttons']['lb'] = True
+            pad['axes']['left_y'] = -.3
+        return pad
+    if scenario == 'hold-home':
+        pad = synthetic_pad(0.)
+        if .5 <= elapsed < 2.5:
+            pad['buttons']['lb'] = True
+            pad['axes']['left_y'] = -.3
+        elif 3. <= elapsed < 4.5 or 5.5 <= elapsed < 10.5:
+            pad['buttons']['a'] = True
+        elif 4.5 <= elapsed < 5.:
+            # A release must stop even if LB and a stick remain held.
+            pad['buttons']['lb'] = True
+            pad['axes']['left_y'] = -.3
+        return pad
     if scenario != 'boundary-retreat':
         return synthetic_pad(elapsed, scenario)
     pad = synthetic_pad(0.)
@@ -48,7 +69,7 @@ def cartesian_synthetic_pad(elapsed, scenario):
     return pad
 
 
-class Runtime(Node):
+class Runtime(GeometryRecovery, Node):
     def __init__(self, args, cfg, source, file):
         super().__init__('piper_servo_audit')
         self.args, self.cfg, self.source, self.file = args, cfg, source, file
@@ -59,7 +80,12 @@ class Runtime(Node):
             from e14.gamepad import PygamePad
             mapping = json.loads(Path(args.gamepad_config).read_text()).get('gamepad', {})
             self.pad = PygamePad(mapping)
-        self.policy = CartesianPolicy(cfg, mapping)
+        home_q = getattr(args, 'home_q', None)
+        self.policy = (HoldToHomePolicy(cfg, mapping, home_q) if home_q is not None
+                       else CartesianPolicy(cfg, mapping))
+        self.quiet_candidate_received = None
+        control_file = getattr(args, 'control_file', None)
+        self.control = ControlMailbox(control_file) if control_file else None
         self.guard = CommandGuard(cfg)
         self.execution = VelocityTarget(cfg)
         self.cadence = CandidateCadence(cfg['publish_period_s'])
@@ -97,20 +123,6 @@ class Runtime(Node):
     def event(self, kind, **kwargs):
         self.file.write(json.dumps({'event': kind, 'monotonic': time.monotonic(), **kwargs}, allow_nan=False) + '\n')
 
-    def status(self, msg):
-        self.latest_status = int(msg.data)
-        self.latest_status_received = time.monotonic()
-        self.event('servo_status', value=int(msg.data), label=STATUS.get(msg.data, 'UNKNOWN'),
-                   recoverable=(self.latest_status == 5))
-        if self.latest_status == 5:
-            self.geometry_hold('Servo joint boundary; inward recovery remains available')
-            return
-        if self.latest_status in (2, 3, 4):
-            if isinstance(self.source, SimSource) and self.feedback is not None:
-                self.source.target = self.feedback.q.copy()
-            if self.socket:
-                self.latch_output(STATUS.get(self.latest_status, 'Servo halt'))
-
     def latch_output(self, reason):
         """A rejected live command ends this test; never silently skip/recover."""
         if self.output_latched:
@@ -124,33 +136,8 @@ class Runtime(Node):
         except OSError as exc:
             self.event('worker_stop_notification_failed', detail=str(exc))
 
-    def geometry_hold(self, reason):
-        """Hold only, preserving the real status; never transmit positions under JOINT_BOUND."""
-        now = time.monotonic()
-        if (self.latest_status not in (0, 1, 5, 6) or self.latest_status_received is None or
-                not 0 <= now-self.latest_status_received <= self.cfg['command_max_age_s']):
-            if self.socket:
-                self.latch_output('Cannot verify fresh Servo status for geometry hold')
-            return
-        self.geometry_paused = True
-        self.execution.reset()
-        self.guard = CommandGuard(self.cfg)
-        self.policy.reset_motion()
-        if isinstance(self.source, SimSource) and self.feedback is not None:
-            self.source.target = self.feedback.q.copy()
-        if self.socket and not self.output_latched:
-            try:
-                self.socket.sendto(json.dumps({'version': 1, 'monotonic': now,
-                    'deadman': False, 'geometry_hold': True,
-                    'servo_status': self.latest_status,
-                    'status_monotonic': self.latest_status_received}).encode(), self.args.output_socket)
-                self.relay_active = False
-            except OSError as exc:
-                self.latch_output(str(exc))
-        self.event('geometry_hold', reason=reason, status=self.latest_status, recoverable=True)
-
     def trajectory(self, msg):
-        if self.latest_status == 5 or self.policy.pause:
+        if self.latest_status in GEOMETRY_STATUSES or self.policy.pause:
             self.geometry_hold(self.policy.diagnostics.get('message', 'Joint boundary'))
             return
         self.geometry_paused = False
@@ -187,6 +174,7 @@ class Runtime(Node):
                 raise ValueError('Missing, unhealthy, stale or future measured feedback')
             if self.args.execution_mode == 'integrated-velocity':
                 self.execution.validate_candidate(list(msg.joint_names), q, v, self.feedback)
+                self.quiet_candidate_received = now if max(abs(value) for value in v) <= .001 else None
                 if self.cadence.should_defer(now):
                     self.event('trajectory_coalesced', input_seq=self.seq,
                                since_last_output_s=now-self.cadence.last_output,
@@ -207,6 +195,9 @@ class Runtime(Node):
                 execution_q, execution_v = self.guard.last_q.copy(), self.guard.last_velocity.copy()
             if isinstance(self.source, SimSource):
                 self.source.target = execution_q.copy()
+                if self.gripper_cmd is not None:
+                    step = self.cfg['gripper_speed_m_s']*self.cfg['publish_period_s']
+                    self.source.width += float(np.clip(self.gripper_cmd['width_m']-self.source.width, -step, step))
             if self.socket:
                 # The worker independently checks real CAN, freshness, expiry,
                 # health, names, limits and the ongoing deadman lease.
@@ -236,7 +227,7 @@ class Runtime(Node):
                    processing_ms=(time.perf_counter() - before) * 1000,
                    input_to_callback_ms=(time.monotonic() - self.latest_input) * 1000 if self.latest_input else None)
 
-    def feedback_only(self, feedback):
+    def feedback_only(self, feedback, snapshot=None):
         self.feedback = feedback
         joint = JointState()
         age = time.monotonic() - feedback.received
@@ -247,6 +238,14 @@ class Runtime(Node):
         # Do not silently remap this discrepancy. Affected input is rejected.
         if not 0 <= feedback.width <= .07:
             self.jaw_outside_model += 1
+            self.event('gripper_feedback_outside_model', measured_width_m=feedback.width,
+                       model_limits_m=[0., .07],
+                       previous_gripper_command=self.gripper_cmd,
+                       feedback_received=feedback.received,
+                       gripper_feedback_raw_hex=(snapshot or {}).get('gripper_feedback_raw_hex'),
+                       frame_timestamps=(snapshot or {}).get('frame_timestamps'),
+                       gripper_enabled=(snapshot or {}).get('gripper_enabled'),
+                       gripper_faults=(snapshot or {}).get('gripper_faults'))
             raise ValueError(f'Jaw feedback {feedback.width:g} m is outside this 70 mm model; calibrate/replace model')
         joint.position = feedback.q.tolist() + [feedback.width / 2, -feedback.width / 2]
         joint.velocity = [0.] * 8
@@ -259,7 +258,7 @@ class Runtime(Node):
         feedback, pad, original = self.source.sample(time.monotonic(), dt)
         if time.monotonic() - feedback.received > self.cfg['feedback_max_age_s']:
             raise RuntimeError('Measured feedback is stale; no new joint jog is published')
-        self.feedback_only(feedback)
+        self.feedback_only(feedback, original)
         if self.pad:
             pad = asdict(self.pad.poll())
             if not 0 <= time.monotonic() - pad['timestamp'] <= self.cfg['command_max_age_s']:
@@ -270,14 +269,39 @@ class Runtime(Node):
         pose, jac = self.kin.forward(feedback.q, jacobian=True)
         condition = float(np.linalg.cond(jac))
         was_active = self.policy.active
+        was_reset_opening = getattr(self.policy, 'reset_gripper_target', None) is not None
+        if self.control is not None:
+            try:
+                request = self.control.receive()
+                if request:
+                    if request['command'] == 'reset':
+                        self.policy.request_reset()
+                    else:
+                        self.policy.cancel_reset()
+                    self.event('ui_reset_command', **request)
+            except (ValueError, OSError) as exc:
+                self.policy.cancel_reset('复位请求无效，已停止：'+str(exc), failed=True)
+                self.event('ui_reset_rejected', reason=str(exc))
+        home_options = {}
+        if isinstance(self.policy, HoldToHomePolicy):
+            requested_at = self.policy.home_requested_at
+            quiet_at = self.quiet_candidate_received
+            home_options['home_may_start'] = (
+                requested_at is not None and quiet_at is not None and quiet_at >= requested_at
+                and 0 <= time.monotonic()-quiet_at <= self.cfg['command_max_age_s']
+                and self.latest_status in (0, 1, 6))
+            home_options['measured_width'] = feedback.width
         joint_velocity = self.policy.step(pad, pose[:3, :3], dt,
                                  reference_may_advance=self.latest_status in (0, 1, 6),
-                                 measured_q=feedback.q, reference_q=self.execution.position)
+                                 measured_q=feedback.q, reference_q=self.execution.position,
+                                 **home_options)
         if was_active and not self.policy.active:
             # Reset the execution reference on release for both simulation and
             # live output. A new deadman session starts at fresh measured q.
             self.guard = CommandGuard(self.cfg)
             self.execution.reset()
+            if isinstance(self.source, SimSource):
+                self.source.target = feedback.q.copy()
         if self.socket and was_active and not self.policy.active and not self.output_latched:
             # Release must not depend on a decelerating Servo candidate passing
             # the trajectory guard. The worker owns the commissioned hold.
@@ -286,22 +310,27 @@ class Runtime(Node):
                                               'servo_status': self.latest_status,
                                               'status_monotonic': self.latest_status_received,
                                               'deadman': False,
-                                              'geometry_hold': self.latest_status == 5}).encode(), self.args.output_socket)
+                                              **({'hold_gripper': True} if was_reset_opening and self.latest_status in (0, 1, 6) else {}),
+                                              'geometry_hold': self.latest_status in GEOMETRY_STATUSES}).encode(), self.args.output_socket)
                 self.relay_active = False
                 self.event('relay_deadman_released')
             except OSError as exc:
                 self.latch_output(str(exc))
-        # Gripper follows the gamepad_teleop convention: B / right trigger opens,
-        # A / left trigger closes, and it only moves while the LB deadman is held.
+        # With hold-to-home enabled, A is reserved for return; LT closes.
+        # B/RT opens and gripper movement requires the LB deadman.
         grip_axis = (float(pad.get('axes', {}).get('right_trigger', 0.))
                      - float(pad.get('axes', {}).get('left_trigger', 0.)))
         buttons = pad.get('buttons', {})
-        if buttons.get('a'):
+        if buttons.get('a') and not isinstance(self.policy, HoldToHomePolicy):
             grip_axis = -1.
         if buttons.get('b'):
             grip_axis = 1.
         self.gripper_cmd = None
-        if self.policy.active and abs(grip_axis) > .05:
+        reset_width = getattr(self.policy, 'reset_gripper_target', None)
+        if self.policy.active and reset_width is not None:
+            self.gripper_cmd = {'width_m': reset_width, 'effort': int(self.cfg['gripper_effort'])}
+        elif (self.policy.active and getattr(self.policy, 'gripper_allowed', True)
+                and abs(grip_axis) > .05):
             low, high = self.cfg['gripper_limits_m']
             width = min(high, max(low, float(feedback.width) + grip_axis * self.cfg['gripper_speed_m_s'] * dt))
             self.gripper_cmd = {'width_m': width, 'effort': int(self.cfg['gripper_effort'])}
@@ -339,7 +368,11 @@ class Runtime(Node):
                    orientation_goal=self.policy.orientation.tolist() if self.policy.orientation is not None else None,
                    orientation_error_rad=float(error_angle) if error_angle is not None else None,
                    jacobian_condition=condition if math.isfinite(condition) else None, status=self.latest_status,
-                   joint_input_faulted=self.policy.faulted, planner=self.policy.diagnostics,
+                   joint_input_faulted=self.policy.faulted,
+                   ui_command_seq=self.control.received if self.control else 0,
+                   planner={**self.policy.diagnostics,
+                            'reset_state': getattr(self.policy, 'reset_state', 'idle'),
+                            'reset_message': getattr(self.policy, 'reset_message', '')},
                    active=self.policy.active, gamepad=pad, original_monotonic=original.get('monotonic') if original else None,
                    original_ik_accepted=original.get('planner', {}).get('accepted') if original else None,
                    input_published=input_published,
@@ -394,18 +427,30 @@ def main():
     parser.add_argument('--log')
     parser.add_argument('--input', choices=('recorded', 'synthetic', 'gamepad', 'none'))
     parser.add_argument('--gamepad-config', default='gamepad.local.teleop.json')
-    parser.add_argument('--scenario', choices=('xyz', 'x', 'singularity', 'collision', 'timeout', 'boundary-retreat'), default='xyz')
+    parser.add_argument('--scenario', choices=('xyz', 'x', 'singularity', 'collision', 'timeout', 'boundary-retreat', 'hold-home', 'keyboard-reset'), default='xyz')
     parser.add_argument('--duration', type=float, default=18.)
     parser.add_argument('--max-cycles', type=int)
     parser.add_argument('--output', default='outputs/servo_bridge/run')
     parser.add_argument('--execution-mode', choices=('servo-position', 'integrated-velocity'), default='servo-position')
     parser.add_argument('--output-socket', help='Explicit future relay to a separately manually armed SDK worker')
     parser.add_argument('--orientation-mode', choices=('position', 'hold'))
+    parser.add_argument('--initial-state', help='Initial-state JSON for hold-A return')
+    parser.add_argument('--control-file', help='Session-local keyboard reset intent mailbox')
     args = parser.parse_args()
     cfg = load_config(args.config)
     if args.orientation_mode:
         cfg['cartesian_orientation_mode'] = args.orientation_mode
-    CartesianPolicy(cfg)  # Validate this profile before any subprocess or actuator is opened.
+    if args.control_file and not args.initial_state:
+        parser.error('Keyboard reset requires --initial-state')
+    if args.scenario in ('hold-home', 'keyboard-reset') and not args.initial_state:
+        parser.error('hold-home simulation requires --initial-state')
+    args.home_q = load_home_reference(args.initial_state) if args.initial_state else None
+    if args.home_q is None:
+        CartesianPolicy(cfg)
+    else:
+        if args.execution_mode != 'integrated-velocity':
+            parser.error('Hold-A return requires integrated-velocity execution')
+        HoldToHomePolicy(cfg, home_q=args.home_q)
     if not math.isfinite(args.duration) or args.duration <= 0:
         parser.error('duration must be positive and finite')
     args.input = args.input or {'log': 'recorded', 'sim': 'synthetic', 'can': 'none'}[args.source]

@@ -34,10 +34,11 @@ from e14.gamepad_kinematics import PiperKinematics
 from servo_bridge.core import CommandGuard, NAMES, STATUS, load_config
 from servo_bridge.sources import LogSource, SimSource, PassiveCan, synthetic_pad
 from servo_bridge.twist_policy import TwistPolicy
+from servo_bridge.geometry_recovery import GeometryRecovery, GEOMETRY_STATUSES
 from servo_bridge.execution import VelocityTarget
 
 
-class Runtime(Node):
+class Runtime(GeometryRecovery, Node):
     def __init__(self, args, cfg, source, file):
         super().__init__('piper_servo_audit')
         self.args, self.cfg, self.source, self.file = args, cfg, source, file
@@ -72,6 +73,7 @@ class Runtime(Node):
         self.output_latched = False
         self.relay_active = False
         self.gripper_cmd = None
+        self.geometry_paused = False
         if args.output_socket:
             if args.source != 'can' or args.input != 'gamepad':
                 raise ValueError('SDK relay is only allowed with passive CAN feedback + live gamepad; no log/synthetic input')
@@ -83,16 +85,6 @@ class Runtime(Node):
 
     def event(self, kind, **kwargs):
         self.file.write(json.dumps({'event': kind, 'monotonic': time.monotonic(), **kwargs}, allow_nan=False) + '\n')
-
-    def status(self, msg):
-        self.latest_status = int(msg.data)
-        self.latest_status_received = time.monotonic()
-        self.event('servo_status', value=int(msg.data), label=STATUS.get(msg.data, 'UNKNOWN'))
-        if self.latest_status in (2, 4, 5):
-            if isinstance(self.source, SimSource) and self.feedback is not None:
-                self.source.target = self.feedback.q.copy()
-            if self.socket:
-                self.latch_output(STATUS.get(self.latest_status, 'Servo halt'))
 
     def latch_output(self, reason):
         """A rejected live command ends this test; never silently skip/recover."""
@@ -108,6 +100,10 @@ class Runtime(Node):
             self.event('worker_stop_notification_failed', detail=str(exc))
 
     def trajectory(self, msg):
+        if self.latest_status in GEOMETRY_STATUSES:
+            self.geometry_hold('关节限位/奇异保护保持；允许反向输入等待 Servo 放行。')
+            return
+        self.geometry_paused = False
         before = time.perf_counter()
         self.output_count += 1
         reason, raw = None, None
@@ -176,7 +172,7 @@ class Runtime(Node):
                    processing_ms=(time.perf_counter() - before) * 1000,
                    input_to_callback_ms=(time.monotonic() - self.latest_input) * 1000 if self.latest_input else None)
 
-    def feedback_only(self, feedback):
+    def feedback_only(self, feedback, snapshot=None):
         self.feedback = feedback
         joint = JointState()
         age = time.monotonic() - feedback.received
@@ -187,6 +183,14 @@ class Runtime(Node):
         # Do not silently remap this discrepancy. Affected input is rejected.
         if not 0 <= feedback.width <= .07:
             self.jaw_outside_model += 1
+            self.event('gripper_feedback_outside_model', measured_width_m=feedback.width,
+                       model_limits_m=[0., .07],
+                       previous_gripper_command=self.gripper_cmd,
+                       feedback_received=feedback.received,
+                       gripper_feedback_raw_hex=(snapshot or {}).get('gripper_feedback_raw_hex'),
+                       frame_timestamps=(snapshot or {}).get('frame_timestamps'),
+                       gripper_enabled=(snapshot or {}).get('gripper_enabled'),
+                       gripper_faults=(snapshot or {}).get('gripper_faults'))
             raise ValueError(f'Jaw feedback {feedback.width:g} m is outside this 70 mm model; calibrate/replace model')
         joint.position = feedback.q.tolist() + [feedback.width / 2, -feedback.width / 2]
         joint.velocity = [0.] * 8
@@ -199,7 +203,7 @@ class Runtime(Node):
         feedback, pad, original = self.source.sample(time.monotonic(), dt)
         if time.monotonic() - feedback.received > self.cfg['feedback_max_age_s']:
             raise RuntimeError('Measured feedback is stale; no new twist is published')
-        self.feedback_only(feedback)
+        self.feedback_only(feedback, original)
         if self.pad:
             pad = asdict(self.pad.poll())
             if not 0 <= time.monotonic() - pad['timestamp'] <= self.cfg['command_max_age_s']:
@@ -223,7 +227,8 @@ class Runtime(Node):
                 self.socket.sendto(json.dumps({'version': 1, 'monotonic': time.monotonic(),
                                               'servo_status': self.latest_status,
                                               'status_monotonic': self.latest_status_received,
-                                              'deadman': False}).encode(), self.args.output_socket)
+                                              'deadman': False,
+                                              'geometry_hold': self.latest_status in GEOMETRY_STATUSES}).encode(), self.args.output_socket)
                 self.relay_active = False
                 self.event('relay_deadman_released')
             except OSError as exc:

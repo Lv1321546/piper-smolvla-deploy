@@ -46,8 +46,9 @@ class SDKJointWriter:
 
 class Worker:
     """Pure command/lease checks shared by the real worker and fake-SDK tests."""
-    def __init__(self, cfg, writer, *, clock=time.monotonic):
+    def __init__(self, cfg, writer, *, clock=time.monotonic, audit=None):
         self.cfg, self.writer, self.clock = cfg, writer, clock
+        self.audit = audit
         self.guard = CommandGuard(cfg, clock=clock)
         self.last_packet = None
         self.moved = False
@@ -72,10 +73,10 @@ class Worker:
             raise ValueError('Servo status is missing, stale or future')
         if not feedback.ready:
             raise ValueError('Requires already enabled, healthy CAN/MOVE_J; no mode or enable is sent')
-        # XYZ v2 may request a measured-position HOLD at a geometric boundary.
+        # Teleoperation may request measured-position HOLD at a geometric boundary.
         # This accepts no supplied target or gripper command, never relabels
-        # status=5 as healthy, and cannot resume motion before real status clears.
-        if (packet.get('servo_status') == 5 and packet.get('geometry_hold') is True
+        # a halt as healthy, and cannot resume motion before real status clears.
+        if (packet.get('servo_status') in (2, 5) and packet.get('geometry_hold') is True
                 and packet.get('deadman') is False):
             if any(key in packet for key in ('joint_names', 'positions', 'velocities', 'gripper')):
                 raise ValueError('Geometry hold must not contain motion or gripper targets')
@@ -85,7 +86,14 @@ class Worker:
         if packet.get('servo_status') not in (0, 1, 6):
             raise ValueError('Servo warning/halt/collision state forbids transmission')
         if packet.get('deadman') is not True:
+            hold_gripper = packet.get('hold_gripper', False)
+            if not isinstance(hold_gripper, bool):
+                raise ValueError('Invalid gripper hold flag')
+            gripper = (self._gripper_command({'gripper': {'width_m': feedback.width}})
+                       if hold_gripper and self.moved else None)
             self.hold(feedback)
+            if gripper is not None:
+                self.writer.gripper(*gripper)
             self.last_packet = timestamp
             return False
         raw = self.guard.validate(packet['joint_names'], packet['positions'], packet['velocities'],
@@ -94,7 +102,13 @@ class Worker:
         gripper = self._gripper_command(packet)
         self.writer.joint(raw)
         if gripper is not None:
+            if self.audit:
+                self.audit(dict(event='gripper_transmit_requested', monotonic=self.clock(),
+                                width_sdk=gripper[0], effort_sdk=gripper[1]))
             self.writer.gripper(*gripper)
+            if self.audit:
+                self.audit(dict(event='gripper_transmitted', monotonic=self.clock(),
+                                width_sdk=gripper[0], effort_sdk=gripper[1]))
         self.last_packet = timestamp
         self.moved = True
         return True
@@ -196,7 +210,7 @@ def main():
                 time.sleep(.1)
             print(f'One measured-position JointCtrl sent; max observed change={largest:.3f} deg. Operator must confirm physical holding; this script does not mark commissioning complete.', flush=True)
             return
-        worker = Worker(cfg, writer)
+        worker = Worker(cfg, writer, audit=lambda event: print(json.dumps(event), flush=True))
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
         sock.bind(str(sock_path))
         os.chmod(sock_path, 0o600)

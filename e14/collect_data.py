@@ -28,6 +28,22 @@ def write_json(path: Path, value: dict) -> None:
     temporary.replace(path)
 
 
+def image_encoding(camera):
+    """On-disk RGB encoding; capture/observation cadence is unchanged."""
+    fmt=camera.get('image_format','png')
+    if fmt=='png':
+        return 'png',dict(format='PNG',compress_level=1)
+    if fmt not in ('jpeg','jpg'):
+        raise ValueError('Camera image_format must be png or jpeg')
+    quality=camera.get('jpeg_quality',90)
+    subsampling=camera.get('jpeg_subsampling',0)
+    if isinstance(quality,bool) or not isinstance(quality,int) or not 50<=quality<=100:
+        raise ValueError('Camera jpeg_quality must be an integer in 50..100')
+    if isinstance(subsampling,bool) or not isinstance(subsampling,int) or subsampling not in (0,1,2):
+        raise ValueError('Camera jpeg_subsampling must be 0, 1 or 2')
+    return 'jpg',dict(format='JPEG',quality=quality,subsampling=subsampling)
+
+
 def collection_settings(config: dict) -> dict:
     robot, collection = config["robot"], config.get("collection", {})
     settings = {
@@ -43,6 +59,7 @@ def collection_settings(config: dict) -> dict:
     if not config.get("cameras"):
         raise ValueError("At least one RGB camera is required")
     for name, camera in config["cameras"].items():
+        image_encoding(camera)
         if not name or "/" in name or "\\" in name or name in {".", ".."}:
             raise ValueError(f"Invalid camera name: {name!r}")
         if any(not isinstance(camera.get(d), int) or camera[d] <= 0 for d in ("width", "height")):
@@ -98,6 +115,7 @@ def record_episode(robot, cameras, output: str | Path, task: str, config: dict, 
     period = 1 / settings["control_hz"]
     count = max(2, int(math.floor(duration * settings["control_hz"] + 1e-9)) + 1)
     started = clock()
+    encodings={name:image_encoding(camera) for name,camera in config['cameras'].items()}
     manifest = {
         "schema_version": 1, "format": "piper-raw-v1", "status": "recording",
         "task": task, "task_outcome": outcome, "mock": mock, "frames": 0,
@@ -107,6 +125,7 @@ def record_episode(robot, cameras, output: str | Path, task: str, config: dict, 
         "action_mode": "absolute_position", "label_semantics": "next_state",
         "label_note": "Export pairs observation[t] with observed state[t+1]; optional operator commands are audit events, not labels.",
         "cameras": {name: {"width": c["width"], "height": c["height"], "color": "RGB",
+                             **{k:c[k] for k in ('device','label','fps','fourcc','image_format','jpeg_quality','jpeg_subsampling') if k in c},
                              "max_age_ms": c.get("max_age_ms", settings["feedback_max_age_ms"])}
                     for name, c in config["cameras"].items()}, **settings,
     }
@@ -146,9 +165,10 @@ def record_episode(robot, cameras, output: str | Path, task: str, config: dict, 
                 previous_images = sample["image_timestamps"]
                 paths = {}
                 for name, image in camera_frame["images"].items():
-                    relative = Path("images") / name / f"{index:06d}.png"
+                    suffix,options=encodings[name]
+                    relative = Path("images") / name / f"{index:06d}.{suffix}"
                     (output / relative).parent.mkdir(parents=True, exist_ok=True)
-                    Image.fromarray(image).save(output / relative, compress_level=1)
+                    Image.fromarray(image).save(output / relative, **options)
                     paths[name] = relative.as_posix()
                 sample.update(frame_index=index, images=paths)
                 stream.write(json.dumps(sample, allow_nan=False) + "\n")
@@ -187,6 +207,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument('--teleop', choices=['servo'])
     parser.add_argument('--execute', action='store_true', help='Enable real Servo SDK output')
     parser.add_argument('--servo-arm-file', type=Path, help=argparse.SUPPRESS)  # Legacy option, ignored.
+    parser.add_argument('--fixed-home', type=Path, help='Fixed startup/A/H target JSON')
     parser.add_argument('--servo-config', type=Path, default=ROOT/'servo_bridge/config.cartesian.local.json')
     parser.add_argument('--servo-controller', choices=('cartesian', 'legacy'), default='cartesian')
     parser.add_argument('--orientation-mode', choices=('position', 'hold'), default='position')

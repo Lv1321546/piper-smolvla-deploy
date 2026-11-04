@@ -246,7 +246,7 @@ SDK `JointCtrl` 将分成三个 CAN 帧发送，并不提供“电机已经到�
 ### 停止与回退
 
 - 默认模拟/只读运行按 **Ctrl+C**，只关闭本程序启动的 ROS 进程；不发送实机停止、失能或其他清理指令。
-- 现场输出模式松开 **LB**，worker 在收到释放/停止条件且反馈可靠时，按已确认策略发送一次实测关节保持。输入租约为 150 ms；断链会退出 worker。Servo 停止/碰撞/关节边界会锁住输出，需现场排查后重新启动，不自动恢复。
+- 现场输出模式松开 **LB**，worker 在收到释放/停止条件且反馈可靠时，按已确认策略发送一次实测关节保持。输入租约为 150 ms；断链会退出 worker。关节限位和奇异保护请求保持，demo 继续接收反向退离输入，只有真实 Servo 状态放行后才恢复运动；无可行方向则继续保持。碰撞、通信故障和其他执行校验失败仍关闭输出并要求排查后重启。
 - 现场按 worker 终端 **Ctrl+C** 同样请求上述保持后关闭连接。若反馈丢失/故障，软件不能验证位置保持，会关闭写入并报错；现场必须使用已验证的硬件停止流程。这里没有使用会导致阻尼下落的 `MotionCtrl_1` 软急停。
 - 也可在隔离的 ROS 环境调用 `ROS_DOMAIN_ID=83 ROS_LOCALHOST_ONLY=1 ros2 service call /servo_node/stop_servo std_srvs/srv/Trigger '{}'`；这是停止 Servo 计算，不能当作硬件急停。
 - 回退前先退出新路线的 runtime 和 worker，再使用原来的 `e14.gamepad_teleop` 和 `config.local.teleop.json` / `gamepad.local.teleop.json`。本次未更改旧控制逻辑或这些配置，也未修复旧实机 Cartesian 问题；回退只是保留对照。单独验证旧 joint 模式可按 [常用命令](常用命令.md) 操作，不能新旧同时写 CAN。

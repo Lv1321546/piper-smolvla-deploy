@@ -80,8 +80,11 @@ class MessageTests(unittest.TestCase):
 
     def test_servo_halt_never_reaches_simulated_or_sdk_sink(self):
         msg = self.setup(status=2)
+        self.node.policy.reset_motion = lambda: None
+        self.node.geometry_hold = lambda reason: Runtime.geometry_hold(self.node, reason)
         Runtime.trajectory(self.node, msg)
-        self.assertFalse(self.events[-1]['accepted'])
+        self.assertEqual(self.events[-1]['event'], 'geometry_hold')
+        self.assertEqual(self.node.output_count, 0)
         self.assertIsNone(self.node.guard.last_q)
 
     def test_stale_status_never_reaches_output(self):

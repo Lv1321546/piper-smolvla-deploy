@@ -60,6 +60,10 @@ class CameraReader:
                 retries = config["connect_retries"]
                 if isinstance(retries, bool) or not isinstance(retries, int) or retries < 1:
                     raise ValueError(f"cameras.{name}.connect_retries must be a positive integer")
+            if "buffer_size" in config:
+                size = config['buffer_size']
+                if isinstance(size, bool) or not isinstance(size, int) or not 1 <= size <= 32:
+                    raise ValueError(f"cameras.{name}.buffer_size must be an integer in 1..32")
         devices = [str(c.get("device")) for c in self.config.values()]
         if not self.mock and len(set(devices)) != len(devices):
             raise ValueError("Multiple camera names must not point to the same device")
@@ -71,6 +75,8 @@ class CameraReader:
     def connect(self):
         if self._connected:
             return
+        if any(t.is_alive() for t in self._threads):
+            raise RuntimeError("Previous camera thread is still blocked; restart the process before reconnecting")
         self._stop.clear()
         self._frames.clear()
         self._errors.clear()
@@ -123,7 +129,7 @@ class CameraReader:
                 capture.set(cv2.CAP_PROP_FRAME_WIDTH, config["width"])
                 capture.set(cv2.CAP_PROP_FRAME_HEIGHT, config["height"])
                 capture.set(cv2.CAP_PROP_FPS, config["fps"])
-                capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Best effort; driver may ignore.
+                capture.set(cv2.CAP_PROP_BUFFERSIZE, config.get('buffer_size', 1))  # Best effort.
                 reported_fps = capture.get(cv2.CAP_PROP_FPS)
                 if reported_fps > 0 and abs(reported_fps - config["fps"]) / config["fps"] > .1:
                     raise RuntimeError(f"Camera {name} reports {reported_fps:g} FPS, requested {config['fps']}")

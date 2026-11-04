@@ -135,10 +135,12 @@ class FeedbackStore:
             "frame_timestamps": {hex(i): frames[i][1] for i in REQUIRED_FRAMES},
             "feedback_monotonic": min(frames[i][1] for i in REQUIRED_FRAMES),
             "ctrl_mode": status[0], "arm_status": status[1], "mode_feed": status[2],
+            "teach_status": status[3],
             "err_code": int.from_bytes(status[6:8], "big"),
             "enabled": [bool(code & 0x40) for code in motors],
             "motor_faults": [code & 0xBF for code in motors],
             "gripper_enabled": bool(grip[6] & 0x40), "gripper_faults": grip[6] & 0x3F,
+            "gripper_feedback_raw_hex": grip.hex(),
         }
 
 

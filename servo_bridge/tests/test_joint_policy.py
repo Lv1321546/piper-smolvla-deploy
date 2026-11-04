@@ -150,6 +150,91 @@ class JointPolicyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             policy.step(pad(), np.eye(3), float('nan'))
 
+    def test_every_joint_blocks_outward_but_allows_inward_without_releasing_lb(self):
+        inputs = [('left_x', 1), ('left_y', -1), ('right_y', -1),
+                  ('hat_x', 1), ('hat_y', 1), ('right_x', 1)]
+        for index, (key, sign) in enumerate(inputs):
+            for side, outward in ((0, -1), (1, 1)):
+                policy = self.armed()
+                q = np.radians(self.cfg['sim_initial_joints_deg'])
+                q[index] = policy.limits[index, side] - outward*.03
+                sample = pad(lb=True)
+                def command(direction):
+                    if key.startswith('hat'):
+                        sample['hat'][0 if key == 'hat_x' else 1] = sign*direction
+                    else:
+                        sample['axes'][key] = sign*direction
+                with self.subTest(joint=index+1, side=side):
+                    command(outward)
+                    for _ in range(20):
+                        v = policy.step(sample, np.eye(3), self.dt, measured_q=q)
+                        np.testing.assert_array_equal(v, 0)
+                    command(-outward)
+                    v = policy.step(sample, np.eye(3), self.dt, measured_q=q)
+                    self.assertLess(v[index]*outward, 0)
+                    self.assertTrue(policy.active)
+
+    def test_long_motion_brakes_before_margin_then_retreats(self):
+        policy = self.armed()
+        q = np.radians(self.cfg['sim_initial_joints_deg'])
+        q[0] = policy.limits[0, 1]-.3
+        sample = pad(lb=True)
+        sample['axes']['left_x'] = 1
+        previous = np.zeros(6)
+        for _ in range(400):
+            v = policy.step(sample, np.eye(3), self.dt, measured_q=q)
+            self.assertFalse(policy.pause)
+            self.assertLessEqual(max(abs(v-previous)), policy.acceleration*self.dt+1e-8)
+            q += v*self.dt
+            self.assertLessEqual(q[0], policy.limits[0, 1]-policy.margin+1e-8)
+            previous = v
+        self.assertLess(abs(v[0]), 1e-6)
+        sample['axes']['left_x'] = -1
+        self.assertLess(policy.step(sample, np.eye(3), self.dt, measured_q=q)[0], 0)
+
+    def test_integrated_reference_near_limit_and_invalid_feedback(self):
+        policy = self.armed()
+        q = np.radians(self.cfg['sim_initial_joints_deg'])
+        reference = q.copy()
+        reference[0] = policy.limits[0, 1]-.03
+        sample = pad(lb=True)
+        sample['axes']['left_x'] = 1
+        np.testing.assert_array_equal(policy.step(sample, np.eye(3), self.dt,
+            measured_q=q, reference_q=reference), 0)
+        q[0] = policy.limits[0, 1]+.001
+        with self.assertRaises(ValueError):
+            policy.step(sample, np.eye(3), self.dt, measured_q=q)
+
+    def test_filtered_execution_with_feedback_lag_stays_inside_servo_margin(self):
+        from servo_bridge.core import Feedback, NAMES
+        from servo_bridge.execution import VelocityTarget
+        policy = self.armed()
+        execution = VelocityTarget(self.cfg)
+        q = np.radians(self.cfg['sim_initial_joints_deg'])
+        q[0] = policy.limits[0, 1]-.6
+        sample = pad(lb=True)
+        sample['axes']['left_x'] = 1
+        near = None
+        holds = 0
+        for index in range(700):
+            if index == 500:
+                near = q[0]
+                sample['axes']['left_x'] = -1
+            velocity = policy.step(sample, np.eye(3), self.dt,
+                measured_q=q, reference_q=execution.position)
+            if policy.pause:
+                holds += 1
+                execution.reset()  # Runtime sends measured hold and clears the adapter.
+            now = 100.+index*self.dt
+            _, target, _ = execution.step(NAMES, velocity,
+                feedback=Feedback(q.copy(), now, ready=True), now=now,
+                stamp_age_s=0., horizon_s=self.dt)
+            q += (target-q)*(1-np.exp(-self.dt/.08))
+            self.assertLess(target[0], policy.limits[0, 1]-.05)
+            self.assertLess(q[0], policy.limits[0, 1]-.05)
+        self.assertLess(q[0], near-.2)
+        self.assertLessEqual(holds, 3)
+
     def test_live_joint_config_reverses_all_six_inputs_without_changing_gripper(self):
         root = PROFILE.parents[1]
         original = json.loads((root / 'gamepad.servo.example.json').read_text())['gamepad']

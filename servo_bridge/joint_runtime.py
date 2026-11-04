@@ -31,10 +31,13 @@ from e14.gamepad_kinematics import PiperKinematics
 from servo_bridge.core import CommandGuard, NAMES, STATUS, load_config
 from servo_bridge.sources import LogSource, SimSource, PassiveCan, synthetic_pad
 from servo_bridge.joint_policy import JointPolicy
+from servo_bridge.geometry_recovery import GeometryRecovery, GEOMETRY_STATUSES
 from servo_bridge.execution import VelocityTarget
+from servo_bridge.candidate_cadence import CandidateCadence
+from servo_bridge.feedback_diagnostics import frame_ages, stale_description
 
 
-class Runtime(Node):
+class Runtime(GeometryRecovery, Node):
     def __init__(self, args, cfg, source, file):
         super().__init__('piper_servo_audit')
         self.args, self.cfg, self.source, self.file = args, cfg, source, file
@@ -48,6 +51,7 @@ class Runtime(Node):
         self.policy = JointPolicy(cfg, mapping)
         self.guard = CommandGuard(cfg)
         self.execution = VelocityTarget(cfg)
+        self.cadence = CandidateCadence(cfg['publish_period_s'])
         self.joints_pub = self.create_publisher(JointState, '/piper_servo/joint_states', 10)
         self.jog_pub = self.create_publisher(JointJog, '/piper_servo/jog', 10)
         self.scene_pub = self.create_publisher(PlanningScene, '/planning_scene', 10)
@@ -69,6 +73,7 @@ class Runtime(Node):
         self.output_latched = False
         self.relay_active = False
         self.gripper_cmd = None
+        self.geometry_paused = False
         if args.output_socket:
             if args.source != 'can' or args.input != 'gamepad':
                 raise ValueError('SDK relay is only allowed with passive CAN feedback + live gamepad; no log/synthetic input')
@@ -80,16 +85,6 @@ class Runtime(Node):
 
     def event(self, kind, **kwargs):
         self.file.write(json.dumps({'event': kind, 'monotonic': time.monotonic(), **kwargs}, allow_nan=False) + '\n')
-
-    def status(self, msg):
-        self.latest_status = int(msg.data)
-        self.latest_status_received = time.monotonic()
-        self.event('servo_status', value=int(msg.data), label=STATUS.get(msg.data, 'UNKNOWN'))
-        if self.latest_status in (2, 4, 5):
-            if isinstance(self.source, SimSource) and self.feedback is not None:
-                self.source.target = self.feedback.q.copy()
-            if self.socket:
-                self.latch_output(STATUS.get(self.latest_status, 'Servo halt'))
 
     def latch_output(self, reason):
         """A rejected live command ends this test; never silently skip/recover."""
@@ -105,6 +100,10 @@ class Runtime(Node):
             self.event('worker_stop_notification_failed', detail=str(exc))
 
     def trajectory(self, msg):
+        if self.latest_status in GEOMETRY_STATUSES or self.policy.pause:
+            self.geometry_hold('关节限位/奇异保护保持；允许反向输入等待 Servo 放行。')
+            return
+        self.geometry_paused = False
         before = time.perf_counter()
         self.output_count += 1
         reason, raw = None, None
@@ -130,11 +129,23 @@ class Runtime(Node):
                 raise ValueError('Expected one Servo trajectory point')
             if msg.header.frame_id not in ('', 'base_link'):
                 raise ValueError('Unexpected trajectory frame')
+            now = time.monotonic()
+            if not math.isfinite(age) or not 0 <= age <= self.cfg['command_max_age_s']:
+                raise ValueError('Trajectory timestamp is stale, future or invalid')
+            if (self.feedback is None or not self.feedback.healthy or
+                    not 0 <= now-self.feedback.received <= self.cfg['feedback_max_age_s']):
+                raise ValueError('Missing, unhealthy, stale or future measured feedback')
             if self.args.execution_mode == 'integrated-velocity':
                 self.execution.validate_candidate(list(msg.joint_names), q, v, self.feedback)
+                if self.cadence.should_defer(now):
+                    self.event('trajectory_coalesced', input_seq=self.seq,
+                               since_last_output_s=now-self.cadence.last_output,
+                               minimum_interval_s=self.cadence.minimum_interval,
+                               note='No integration or SDK packet; await the next fresh candidate')
+                    return
                 if self.policy.active:
                     raw, execution_q, execution_v = self.execution.step(list(msg.joint_names), v,
-                        feedback=self.feedback, now=time.monotonic(), stamp_age_s=age, horizon_s=horizon)
+                        feedback=self.feedback, now=now, stamp_age_s=age, horizon_s=horizon)
                 else:
                     self.execution.reset()
                     raw = self.guard.validate(list(NAMES), self.feedback.q, [0.]*6,
@@ -158,6 +169,8 @@ class Runtime(Node):
                     data['gripper'] = self.gripper_cmd
                 self.socket.sendto(json.dumps(data).encode(), self.args.output_socket)
                 self.relay_active = bool(self.policy.active)
+            if self.args.execution_mode == 'integrated-velocity':
+                self.cadence.commit(time.monotonic())
         except (ValueError, OSError) as exc:
             reason = str(exc)
             self.invalid_count += 1
@@ -173,7 +186,7 @@ class Runtime(Node):
                    processing_ms=(time.perf_counter() - before) * 1000,
                    input_to_callback_ms=(time.monotonic() - self.latest_input) * 1000 if self.latest_input else None)
 
-    def feedback_only(self, feedback):
+    def feedback_only(self, feedback, snapshot=None):
         self.feedback = feedback
         joint = JointState()
         age = time.monotonic() - feedback.received
@@ -184,6 +197,14 @@ class Runtime(Node):
         # Do not silently remap this discrepancy. Affected input is rejected.
         if not 0 <= feedback.width <= .07:
             self.jaw_outside_model += 1
+            self.event('gripper_feedback_outside_model', measured_width_m=feedback.width,
+                       model_limits_m=[0., .07],
+                       previous_gripper_command=self.gripper_cmd,
+                       feedback_received=feedback.received,
+                       gripper_feedback_raw_hex=(snapshot or {}).get('gripper_feedback_raw_hex'),
+                       frame_timestamps=(snapshot or {}).get('frame_timestamps'),
+                       gripper_enabled=(snapshot or {}).get('gripper_enabled'),
+                       gripper_faults=(snapshot or {}).get('gripper_faults'))
             raise ValueError(f'Jaw feedback {feedback.width:g} m is outside this 70 mm model; calibrate/replace model')
         joint.position = feedback.q.tolist() + [feedback.width / 2, -feedback.width / 2]
         joint.velocity = [0.] * 8
@@ -195,8 +216,10 @@ class Runtime(Node):
         started = time.perf_counter()
         feedback, pad, original = self.source.sample(time.monotonic(), dt)
         if time.monotonic() - feedback.received > self.cfg['feedback_max_age_s']:
-            raise RuntimeError('Measured feedback is stale; no new joint jog is published')
-        self.feedback_only(feedback)
+            details=frame_ages(original,time.monotonic(),self.cfg['feedback_max_age_s'])
+            self.event('feedback_timeout',**details)
+            raise RuntimeError('Measured feedback is stale; no new joint jog is published. '+stale_description(details))
+        self.feedback_only(feedback, original)
         if self.pad:
             pad = asdict(self.pad.poll())
             if not 0 <= time.monotonic() - pad['timestamp'] <= self.cfg['command_max_age_s']:
@@ -208,7 +231,10 @@ class Runtime(Node):
         condition = float(np.linalg.cond(jac))
         was_active = self.policy.active
         joint_velocity = self.policy.step(pad, pose[:3, :3], dt,
-                                 reference_may_advance=self.latest_status in (0, 1, 6))
+                                 reference_may_advance=self.latest_status in (0, 1, 6),
+                                 measured_q=feedback.q, reference_q=self.execution.position)
+        if self.policy.pause and self.latest_status in (0, 1, 6):
+            self.geometry_hold('限位处需要保持；反向输入可退回。')
         if was_active and not self.policy.active:
             # Reset the execution reference on release for both simulation and
             # live output. A new deadman session starts at fresh measured q.
@@ -221,7 +247,8 @@ class Runtime(Node):
                 self.socket.sendto(json.dumps({'version': 1, 'monotonic': time.monotonic(),
                                               'servo_status': self.latest_status,
                                               'status_monotonic': self.latest_status_received,
-                                              'deadman': False}).encode(), self.args.output_socket)
+                                              'deadman': False,
+                                              'geometry_hold': self.latest_status in GEOMETRY_STATUSES}).encode(), self.args.output_socket)
                 self.relay_active = False
                 self.event('relay_deadman_released')
             except OSError as exc:
@@ -271,10 +298,12 @@ class Runtime(Node):
                    measured_q_rad=feedback.q.tolist(), measured_pose=pose.tolist(), jaw_width_m=feedback.width,
                    gripper_command=self.gripper_cmd,
                    feedback_age_s=time.monotonic() - feedback.received, joint_velocity_rad_s=joint_velocity.tolist(), control_mode='joint_jog',
+                   feedback_frame_timestamps=(original or {}).get('frame_timestamps') if self.args.source=='can' else None,
                    orientation_goal=self.policy.orientation.tolist() if self.policy.orientation is not None else None,
                    orientation_error_rad=float(error_angle) if error_angle is not None else None,
                    jacobian_condition=condition if math.isfinite(condition) else None, status=self.latest_status,
                    joint_input_faulted=self.policy.faulted,
+                   geometry_paused=self.geometry_paused, planner=self.policy.diagnostics,
                    active=self.policy.active, gamepad=pad, original_monotonic=original.get('monotonic') if original else None,
                    original_ik_accepted=original.get('planner', {}).get('accepted') if original else None,
                    input_published=input_published,

@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-11-04T20:22:03.280961+08:00",
+  "source": "passive_can_joint_feedback",
+  "joint_unit": "degree",
+  "joint_angles": [
+    2.681,
+    80.357,
+    -64.467,
+    -3.659,
+    62.954,
+    2.46
+  ],
+  "gripper_width_m": 0.0697,
+  "base_to_link6": [
+    [
+      -0.959579513429072,
+      -0.017548709723388213,
+      0.28089001440825456,
+      0.26636465410012294
+    ],
+    [
+      -0.03107032202235856,
+      0.9985589230615778,
+      -0.043757425238792814,
+      0.007291117907499332
+    ],
+    [
+      -0.2797173439324994,
+      -0.05071607202007923,
+      -0.9587419295838696,
+      0.2948100547884538
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "pose_source": "forward_kinematics_from_measured_joints",
+  "control_frame": "link6",
+  "tcp_calibrated": false,
+  "feedback_monotonic": 15101.308984904,
+  "minimum_joint_margin_deg": 6.946851005960433,
+  "jacobian_condition": 11.396402288312345
+}

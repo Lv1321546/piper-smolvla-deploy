@@ -1,0 +1,134 @@
+{
+  "_note": "双 RGB 笛卡尔手柄示教，front=Dabai，astra=Astra Pro；两路独立存储，20Hz。",
+  "robot": {
+    "can_interface": "can0",
+    "state_action_order": [
+      "joint1",
+      "joint2",
+      "joint3",
+      "joint4",
+      "joint5",
+      "joint6",
+      "gripper_width"
+    ],
+    "joint_unit": "degree",
+    "gripper_unit": "meter_full_opening",
+    "action_mode": "absolute_position",
+    "joint_limits_deg": [
+      [
+        -150,
+        150
+      ],
+      [
+        0,
+        180
+      ],
+      [
+        -170,
+        0
+      ],
+      [
+        -100,
+        100
+      ],
+      [
+        -70,
+        70
+      ],
+      [
+        -120,
+        120
+      ]
+    ],
+    "gripper_limits_m": [
+      0,
+      0.07
+    ],
+    "max_step_delta": [
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      0.0025
+    ],
+    "control_hz": 20,
+    "feedback_max_age_ms": 300,
+    "feedback_limit_tolerance_deg": 1,
+    "speed_percent": 20,
+    "gripper_effort": 500,
+    "stop_strategy": "emergency_stop",
+    "stop_strategy_verified": false,
+    "enable_gripper": false
+  },
+  "cameras": {
+    "front": {
+      "device": "/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._Dabai_DC1_CC1365304K0-video-index0",
+      "width": 640,
+      "height": 480,
+      "fps": 30,
+      "max_age_ms": 200,
+      "fourcc": "MJPG",
+      "connect_timeout_s": 15,
+      "connect_retries": 3,
+      "buffer_size": 4,
+      "label": "Dabai DC1（随臂主视角）",
+      "image_format": "jpeg",
+      "jpeg_quality": 90,
+      "jpeg_subsampling": 0
+    },
+    "astra": {
+      "device": "/dev/v4l/by-id/usb-Astra_Pro_HD_Camera_Astra_Pro_HD_Camera-video-index0",
+      "width": 640,
+      "height": 480,
+      "fps": 30,
+      "max_age_ms": 200,
+      "fourcc": "MJPG",
+      "connect_timeout_s": 15,
+      "connect_retries": 3,
+      "buffer_size": 4,
+      "label": "Astra Pro（辅助第三视角）",
+      "image_format": "jpeg",
+      "jpeg_quality": 80,
+      "jpeg_subsampling": 2
+    }
+  },
+  "client": {
+    "url": "http://127.0.0.1:8080",
+    "timeout_ms": 1000,
+    "max_action_age_ms": 500,
+    "max_response_bytes": 2097152,
+    "execution_horizon": 5,
+    "inference_interval_steps": 2,
+    "dry_run": true
+  },
+  "server": {
+    "backend": "smolvla",
+    "bind": "127.0.0.1",
+    "port": 8080,
+    "device": "cuda:0",
+    "model_path": null,
+    "vlm_path": "/mnt/nas_ailab_434/Personal_File/eureka/models/smolvla_bundle/smolvlm",
+    "manifest_path": null,
+    "camera_map": {
+      "front": "observation.images.front",
+      "astra": "observation.images.astra"
+    },
+    "max_request_bytes": 8388608,
+    "max_image_pixels": 2073600,
+    "max_chunk_steps": 100,
+    "request_timeout_s": 5,
+    "mock_chunk_steps": 10
+  },
+  "collection": {
+    "max_sync_skew_ms": 100,
+    "max_period_error_ratio": 0.5,
+    "max_feedback_age_ms": 300
+  },
+  "storage": {
+    "raw_root": "data/raw",
+    "log_root": "outputs",
+    "nas_root": "/mnt/nas_ailab_434/Personal_File/eureka"
+  }
+}

@@ -9,10 +9,23 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from e14.camera_check import check_cameras
+from e14.camera_check import check_cameras, check_recording_cadence
 
 
 class CameraCheckTests(unittest.TestCase):
+    def test_cadence_rejects_repeated_frames(self):
+        now=[0.]
+        reader=SimpleNamespace(read=lambda:{'image_timestamps':{'front':0.}})
+        with self.assertRaisesRegex(RuntimeError,'重复帧'):
+            check_recording_cadence(reader,20,clock=lambda:now[0],sleep=lambda dt:now.__setitem__(0,now[0]+dt))
+
+    def test_cadence_accepts_fresh_frames_at_original_rate(self):
+        now=[0.]
+        reader=SimpleNamespace(read=lambda:{'image_timestamps':{'front':now[0]}})
+        count=check_recording_cadence(reader,20,clock=lambda:now[0],sleep=lambda dt:now.__setitem__(0,now[0]+dt))
+        self.assertEqual(count,21)
+        self.assertAlmostEqual(now[0],1.)
+
     def test_mock_reader_runs_in_real_child_without_hardware(self):
         check_cameras(Path('config.mock.json'), timeout=10, mock=True)
 

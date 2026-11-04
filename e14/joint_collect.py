@@ -52,7 +52,9 @@ class PassiveRobot:
         if time.monotonic()-f.received > self.settings['feedback_max_age_ms']/1000:
             raise RuntimeError('Stale CAN feedback')
         if not f.ready:
-            raise RuntimeError('采集需要健康且已使能的 CAN/MOVE_J；不会自动切模式或使能')
+            from servo_bridge.feedback_diagnostics import readiness_description
+            raise RuntimeError('采集尚未就绪：'+readiness_description(snap)+
+                               '。此入口只读检查，不自动切模式或使能')
         return snap
 
     def get_observation(self):
@@ -119,8 +121,15 @@ class ServoProcess:
         self.processes.append(subprocess.Popen(command,cwd=ROOT,stdout=f,stderr=subprocess.STDOUT,start_new_session=True))
 
     def alive(self):
-        if self.stopped or any(p.poll() is not None for p in self.processes):
+        if self.stopped:
             raise RuntimeError('Servo/SDK 已停止；本条数据不可作为完整示教。日志：'+str(self.path))
+        for process,handle in zip(self.processes,self.handles):
+            code=process.poll()
+            if code is not None:
+                path=Path(handle.name)
+                tail='\n'.join(path.read_text(errors='replace').splitlines()[-10:]) if path.exists() else ''
+                raise RuntimeError('Servo/SDK 已停止（%s，退出码 %s）；本条数据不可作为完整示教。日志：%s\n%s' %
+                                   (path.name,code,self.path,tail))
 
     def poll(self):
         self.alive()
@@ -134,7 +143,8 @@ class ServoProcess:
                 row=json.loads(line);events.append(row)
                 if row['event']=='input': self.latest=row
                 if row['event']=='relay_latched_closed': raise RuntimeError(row['reason'])
-                if row['event']=='servo_status' and row['value'] in (2,4,5):
+                if (row['event']=='servo_status' and row['value'] in (2,3,4,5)
+                        and not (row['value'] in (2,5) and row.get('recoverable') is True)):
                     raise RuntimeError('Servo halt: '+row['label'])
         if self.latest and time.monotonic()-self.latest['monotonic']>.5:
             raise RuntimeError('Servo telemetry stale')
@@ -196,7 +206,9 @@ class ServoSession(TeachingSession):
             if not (self.args.execute or self.args.mock):
                 raise RuntimeError('只读预览不可录制运动示教；实机执行需 --execute')
             if self.fault:raise RuntimeError(self.fault)
-            if self.status in {'review','finished','recording'}:return
+            if self.status in {'review','finished','recording'}:
+                self.message='先结束并标注上一条录制；若本次计划条数已完成，请重新启动 demo。'
+                return
             self.robot.get_feedback()
             self.start_requested=True
             self._event({'event':'operator_key','command':command,'monotonic':self.clock()})
@@ -222,6 +234,11 @@ class ServoSession(TeachingSession):
             state['message']='关节输入已停止并锁定（Start、断连或设备变更）；请退出并重新启动。'
         if self.status=='recording':
             state['message']='正在录制关节直控示教；空格/X 结束，S/Y 成功，F/Back 失败。夹爪 B/RT 张、A/LT 闭（按住 LB）。'
+        latest = self.bridge.latest or {}
+        if latest.get('status') in (2,5) or latest.get('geometry_paused'):
+            state['warnings'].append('关节限位/奇异保护保持：demo 仍运行，按住 LB 反向退离。')
+        elif latest.get('planner', {}).get('message'):
+            state['warnings'].append(latest['planner']['message'])
         if self.fault:state['warnings'].append(self.fault)
         if not (self.args.execute or self.args.mock):state['warnings'].append('只读预览，运动输出关闭')
         self.dashboard.update(state,(self.camera_frame or {}).get('images',{}))
@@ -248,6 +265,7 @@ class ServoSession(TeachingSession):
         except (ValueError,RuntimeError,OSError) as exc:
             self.fault=str(exc);self.start_requested=False;self.bridge.close()
             self.message='采集/控制已停止：'+str(exc)
+            print(self.message,flush=True)
             if self.status=='recording':raise
             self.quit=True
             self.publish(frame_index)

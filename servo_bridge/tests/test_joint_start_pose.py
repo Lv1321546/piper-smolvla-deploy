@@ -53,11 +53,23 @@ class StartupPoseTests(unittest.TestCase):
             with self.subTest(text=text), self.assertRaises(ValueError):
                 validate_pose(text, self.cfg)
 
-    def test_already_at_pose_never_opens_sdk(self):
-        def forbidden(*args, **kwargs):
-            self.fail('SDK must not be constructed when already at pose')
+    def test_already_at_pose_restores_execution_speed_after_measured_hold(self):
         self.assertFalse(move_to_pose(self.target, self.cfg,
-                         lambda: self.snap(self.target), forbidden))
+            lambda: self.snap(self.target), self.factory, clock=lambda:self.now, sleep=self.sleep))
+        self.assertEqual([c[1][2] for c in self.arm.calls if c[0]=='mode'], [70])
+        joints = [c[1] for c in self.arm.calls if c[0]=='joint']
+        self.assertEqual(joints, [tuple(round(v*1000) for v in self.target)])
+        joint_index = next(i for i,c in enumerate(self.arm.calls) if c[0]=='joint')
+        mode_index = next(i for i,c in enumerate(self.arm.calls) if c[0]=='mode')
+        self.assertLess(joint_index, mode_index)
+        self.assertEqual(self.arm.calls[-1], ('disconnect',))
+
+    def test_changed_pose_cannot_switch_to_normal_speed(self):
+        samples = iter([self.target, self.current, self.current])
+        with self.assertRaisesRegex(RuntimeError, '发生变化'):
+            move_to_pose(self.target, self.cfg, lambda:self.snap(next(samples)),
+                         self.factory, clock=lambda:self.now, sleep=self.sleep)
+        self.assertFalse(any(c[0]=='mode' for c in self.arm.calls))
 
     def test_low_speed_move_then_restore_only_after_three_good_samples(self):
         samples = iter([self.current, self.current, self.target,

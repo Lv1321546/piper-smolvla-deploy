@@ -120,6 +120,48 @@ def episode_split(count: int, validation_fraction: float = .2, seed: int = 42) -
     return {"train": sorted(order[validation_count:]), "validation": sorted(order[:validation_count])}
 
 
+def preserve_encoded_images(destination, episodes):
+    """Keep original JPEG bytes in image-backed parquet, not decoded PNG copies.
+
+    LeRobot's writer first emits its standard representation. Rewrite only
+    image payloads, in small batches, retaining indices, schema and all labels.
+    """
+    rows=[(episode['path'],row['images']) for episode in episodes for row in episode['rows'][:-1]]
+    if not any(Path(relative).suffix.lower() in ('.jpg','.jpeg') for _,images in rows for relative in images.values()):
+        return False
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    files=sorted((destination/'data').rglob('*.parquet'))
+    if not files:raise ValueError('Missing exported parquet files')
+    seen=set()
+    for path in files:
+        source=pq.ParquetFile(path)
+        temporary=path.with_suffix('.parquet.tmp')
+        with pq.ParquetWriter(temporary,source.schema_arrow,compression='zstd') as writer:
+            for batch in source.iter_batches(batch_size=32):
+                table=pa.Table.from_batches([batch])
+                indexes=table.column('index').to_pylist()
+                if (len(set(indexes))!=len(indexes) or
+                        any(isinstance(i,bool) or not isinstance(i,int) or not 0<=i<len(rows) or i in seen for i in indexes)):
+                    raise ValueError('Unexpected exported row index')
+                seen.update(indexes)
+                for name in episodes[0]['manifest']['cameras']:
+                    key=f'observation.images.{name}'
+                    field=table.schema.field(key)
+                    if not pa.types.is_struct(field.type) or set(field.type.names)!={'bytes','path'}:
+                        raise ValueError('Unsupported encoded image storage type')
+                    payloads=[]
+                    for index in indexes:
+                        root,images=rows[index]
+                        payloads.append({'bytes':image_path(root,images[name]).read_bytes(),'path':None})
+                    table=table.set_column(table.schema.get_field_index(key),field,pa.array(payloads,type=field.type))
+                writer.write_table(table)
+        source.close()
+        temporary.replace(path)
+    if seen!=set(range(len(rows))):raise ValueError('Exported row mapping is incomplete')
+    return True
+
+
 def export_dataset(raw_root: str | Path, output: str | Path, repo_id: str, *,
                    validation_fraction: float = .2, seed: int = 42, include_unknown: bool = False) -> dict:
     raw_root, output = Path(raw_root), Path(output)
@@ -183,6 +225,7 @@ def export_dataset(raw_root: str | Path, output: str | Path, repo_id: str, *,
                                                                 for r in rows[:-1]]
                 train_stats.append(compute_episode_stats(stats_input, features))
         dataset.finalize()
+        original_image_bytes=preserve_encoded_images(destination,accepted)
         write_json(destination / "split.json", split)
         write_json(destination / "train_stats.json", serialize_dict(aggregate_stats(train_stats)))
         write_json(destination / "deployment_schema.json", schema)
@@ -190,6 +233,7 @@ def export_dataset(raw_root: str | Path, output: str | Path, repo_id: str, *,
                   "label_semantics": "next_state", "final_raw_frame_omitted": True,
                   "seed": seed, "split": split, "episodes": mapping, "excluded": excluded,
                   "mock": schema["mock"], "images_embedded_in_parquet": True,
+                  "original_encoded_image_bytes_preserved": original_image_bytes,
                   "normalization_stats": "train_stats.json (training split only)"}
         write_json(destination / "export_manifest.json", report)
         destination.rename(output)

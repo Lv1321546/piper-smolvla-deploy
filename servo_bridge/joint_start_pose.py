@@ -30,12 +30,14 @@ def validate_pose(text, cfg):
 
 
 def move_to_pose(target, cfg, read_feedback, factory, *, clock=time.monotonic,
-                 sleep=time.sleep, timeout=120.):
+                 sleep=time.sleep, timeout=120., tolerance_deg=1.5):
     """5% MOVE_J; fresh passive feedback; hold current position on failure.
 
     This is the same joint interpolation approach as the original launcher,
     not a collision-planned trajectory. No gripper/enable/reset commands.
     """
+    if not math.isfinite(tolerance_deg) or not 0 < tolerance_deg <= 1.5:
+        raise ValueError('起始姿态容差必须在 (0, 1.5] 度内')
     bounds = np.degrees(CommandGuard(cfg).limits)
 
     def measured():
@@ -50,13 +52,26 @@ def move_to_pose(target, cfg, read_feedback, factory, *, clock=time.monotonic,
     target, _, _, _ = validate_pose(' '.join(map(str, target)), cfg)
     current = measured()
     print('当前 %s，起始目标 %s' % (np.round(current, 2).tolist(), target.tolist()), flush=True)
-    if np.max(abs(current - target)) <= 1.5:
-        print('已在起始姿态附近，无需移动。', flush=True)
-        return False
+    already_at_pose = np.max(abs(current-target)) <= tolerance_deg
     arm = factory(cfg['can_interface'], start_sdk_joint_limit=False, start_sdk_gripper_limit=False)
     commanded = False
     try:
         arm.ConnectPort(piper_init=False, start_thread=False)
+        if already_at_pose:
+            # A previous recovery/startup may have left the controller at 5%.
+            # Replace its old goal with a fresh measured hold before setting
+            # the same 70% execution rate used after a completed startup move.
+            hold = measured()
+            if np.max(abs(hold-target)) > tolerance_deg:
+                raise RuntimeError('起点在确认期间发生变化，取消启动')
+            commanded = True
+            arm.JointCtrl(*[round(v*1000) for v in hold])
+            arm.MotionCtrl_2(0x01, 0x01, 70, 0x00)
+            sleep(.05)
+            if np.max(abs(measured()-hold)) > .5:
+                raise RuntimeError('设置运行速度期间关节发生偏移，取消启动')
+            print('已在起点附近，已写入实测保持目标并设置正常运行速度。', flush=True)
+            return False
         arm.MotionCtrl_2(0x01, 0x01, 5, 0x00)
         sleep(.2)
         measured()  # Recheck after connection/mode command, before motion.
@@ -67,7 +82,7 @@ def move_to_pose(target, cfg, read_feedback, factory, *, clock=time.monotonic,
         while clock() < deadline:
             error = float(np.max(abs(measured() - target)))
             print('距起始姿态最大关节误差：%.2f°' % error, flush=True)
-            settled = settled + 1 if error < 1.5 else 0
+            settled = settled + 1 if error < tolerance_deg else 0
             if settled >= 3:
                 arm.MotionCtrl_2(0x01, 0x01, 70, 0x00)
                 print('已到达起始姿态，准备启动手柄关节控制。', flush=True)
@@ -95,6 +110,7 @@ def main():
     parser.add_argument('--config', required=True)
     parser.add_argument('--profile', required=True)
     parser.add_argument('--safe-pose', default=DEFAULT_POSE)
+    parser.add_argument('--tolerance-deg', type=float, default=1.5)
     parser.add_argument('--arm-file', help=argparse.SUPPRESS)  # Legacy option, ignored.
     parser.add_argument('--execute', action='store_true')
     args = parser.parse_args()
@@ -113,7 +129,7 @@ def main():
         robot = PassiveRobot(config)
         try:
             robot.connect()
-            move_to_pose(target, cfg, robot.get_feedback, C_PiperInterface_V2)
+            move_to_pose(target, cfg, robot.get_feedback, C_PiperInterface_V2, tolerance_deg=args.tolerance_deg)
         finally:
             robot.disconnect()
 

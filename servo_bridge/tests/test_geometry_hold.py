@@ -1,4 +1,4 @@
-"""A real JOINT_BOUND may authorize hold only, never a new motion target."""
+"""Real geometric halts may authorize hold only, never a new motion target."""
 from copy import deepcopy
 from pathlib import Path
 import unittest
@@ -61,7 +61,7 @@ class GeometryHoldTests(unittest.TestCase):
         self.assertEqual(self.writer.grippers, [])
 
     def test_collision_stale_status_and_unready_feedback_still_fail(self):
-        for status in (2, 3, 4, None):
+        for status in (3, 4, None):
             packet = self.hold()
             packet['servo_status'] = status
             with self.subTest(status=status), self.assertRaises(ValueError):
@@ -75,11 +75,42 @@ class GeometryHoldTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.worker.packet(self.hold(), feedback)
 
-    def test_motion_under_joint_bound_still_rejected(self):
+    def test_motion_under_geometry_halt_still_rejected(self):
+        for status in (2, 5):
+            packet = self.motion()
+            packet.update(servo_status=status, geometry_hold=True)
+            with self.subTest(status=status), self.assertRaises(ValueError):
+                self.worker.packet(packet, self.feedback())
+
+    def test_singularity_hold_is_target_free_and_can_resume_only_after_clear(self):
+        self.worker.packet(self.motion(), self.feedback())
+        self.now += .02
+        packet = self.hold()
+        packet['servo_status'] = 2
+        self.assertFalse(self.worker.packet(packet, self.feedback()))
+        self.assertFalse(self.worker.moved)
+        self.assertEqual(self.writer.joints[-1], sdk_units(self.q))
+        self.now += .02
         packet = self.motion()
-        packet.update(servo_status=5, geometry_hold=True)
-        with self.assertRaises(ValueError):
-            self.worker.packet(packet, self.feedback())
+        packet['servo_status'] = 6
+        self.assertTrue(self.worker.packet(packet, self.feedback()))
+
+    def test_worker_audits_only_explicit_gripper_transmissions(self):
+        events = []
+        self.worker.audit = events.append
+        self.worker.packet(self.motion(), self.feedback())
+        self.assertEqual(events, [])
+        self.now += .02
+        packet = self.motion()
+        packet['gripper'] = dict(width_m=.04, effort=500)
+        self.worker.packet(packet, self.feedback())
+        self.assertEqual([event['event'] for event in events],
+                         ['gripper_transmit_requested', 'gripper_transmitted'])
+        self.assertEqual(events[-1]['width_sdk'], 40000)
+        self.assertEqual(self.writer.grippers, [(40000, 500)])
+        self.now += .02
+        self.worker.packet(self.hold(), self.feedback())
+        self.assertEqual(len(events), 2)  # Exit/hold never operates the gripper.
 
 
 if __name__ == '__main__':

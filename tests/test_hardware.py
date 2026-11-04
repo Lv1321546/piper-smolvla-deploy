@@ -79,6 +79,7 @@ class FeedbackTests(unittest.TestCase):
         self.assertEqual(snap['motor_faults'][0], 0x80)
         self.assertTrue(snap['gripper_enabled'])
         self.assertEqual(snap['gripper_faults'], 0)
+        self.assertEqual(snap['gripper_feedback_raw_hex'], '000000000000c000')
         store.ingest(0x2A8, bytes([0, 0, 0, 0, 0, 0, 0x41, 0]))
         self.assertEqual(store.snapshot()['gripper_faults'], 1)
 
@@ -424,7 +425,8 @@ class CameraTests(unittest.TestCase):
         camera = {'device': 0, 'width': 4, 'height': 3, 'fps': 30, 'max_age_ms': 10}
         with self.assertRaises(ValueError): CameraReader({})
         with self.assertRaises(ValueError): CameraReader({'front': camera, 'wrist': camera})
-        for key, value in [('device', None), ('width', True), ('fps', 0), ('max_age_ms', float('nan'))]:
+        for key, value in [('device', None), ('width', True), ('fps', 0), ('max_age_ms', float('nan')),
+                           ('buffer_size', 0), ('buffer_size', 33), ('buffer_size', True), ('buffer_size', 1.5)]:
             with self.assertRaises(ValueError): CameraReader({'front': {**camera, key: value}})
 
     def test_real_capture_contract_rgb_freshness_and_bounded_close(self):
@@ -433,8 +435,9 @@ class CameraTests(unittest.TestCase):
         class Capture:
             released = False
             count = 0
+            settings = {}
             def isOpened(self): return True
-            def set(self, *_): return True
+            def set(self, key, value): self.settings[key] = value; return True
             def get(self, *_): return 30
             def read(self):
                 self.count += 1
@@ -445,10 +448,13 @@ class CameraTests(unittest.TestCase):
             def release(self): self.released = True
         capture = Capture()
         reader = CameraReader({'front': {'device': 'fake', 'width': 4, 'height': 3,
-                                        'fps': 30, 'max_age_ms': 50, 'join_timeout_s': .01}},
+                                        'fps': 30, 'max_age_ms': 50, 'join_timeout_s': .01,
+                                        'buffer_size': 4}},
                               clock=clock, capture_factory=lambda *_: capture)
         try:
             reader.connect()
+            import cv2
+            self.assertEqual(capture.settings[cv2.CAP_PROP_BUFFERSIZE], 4)
             sample = reader.read()
             self.assertEqual(sample['images']['front'][0, 0].tolist(), [3, 2, 1])
             clock.advance(.1)
