@@ -365,7 +365,8 @@ class ServoSession(TeachingSession):
             self.message += ' Servo 已退出；处理问题后重新启动采集命令。'
 
     def run(self):
-        end=self.clock()+self.args.run_seconds;period=1/self.robot.settings['control_hz']
+        end=self.clock()+self.args.run_seconds if self.args.run_seconds > 0 else math.inf
+        period=1/self.robot.settings['control_hz']
         try:
             while not self.quit and self.clock()<end:
                 start=self.clock();self.poll()
@@ -381,7 +382,7 @@ def run_servo_collection(args):
     if not 0<=args.preview_port<=65535:raise ValueError('Invalid preview port')
     if args.interactive:raise ValueError('--teleop servo replaces --interactive')
     if args.mock and args.execute:raise ValueError('--mock cannot be combined with --execute')
-    if not math.isfinite(args.run_seconds) or args.run_seconds<=0:raise ValueError('Positive --run-seconds required')
+    if not math.isfinite(args.run_seconds) or args.run_seconds<0:raise ValueError('Nonnegative --run-seconds required; 0 means unlimited')
     if args.mock and (args.initialize_can or args.restart_can):raise ValueError('Mock must not configure real CAN')
     robot=PiperRobot(config,mock=True) if args.mock else PassiveRobot(config)
     cameras=CameraReader(config['cameras'],mock=args.mock);bridge=None

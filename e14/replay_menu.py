@@ -36,8 +36,7 @@ class Recording:
 def sources(root=None, config=None):
     if root is not None:
         return [(Path(root).resolve(),Path(config or ROOT/'config.joint.dual.local.json').resolve(),'自定义')]
-    return [(ROOT/'data/piper_raw_joint_dual',ROOT/'config.joint.dual.local.json','双相机'),
-            (ROOT/'data/piper_raw_joint',ROOT/'config.local.json','单相机')]
+    return [(ROOT/'data/piper_raw_cartesian_dual',ROOT/'config.cartesian.dual.local.json','笛卡尔双相机')]
 
 
 def scan(source_list):

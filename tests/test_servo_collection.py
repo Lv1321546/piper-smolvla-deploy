@@ -42,6 +42,44 @@ class ServoCollectionTests(unittest.TestCase):
  def test_gripper_and_home_cannot_invoke_legacy_motion(self):
   for c in ('open','close','home'):self.session.handle(c)
   self.assertEqual(self.backend.commands,[]);self.assertIsNone(self.session.gripper.target)
+ def test_unlimited_collection_records_past_three_and_keeps_numbering(self):
+  self.args.episodes=0
+  for index in range(4):
+   self.session.poll();self.session.handle('record')
+   self.assertTrue(self.session.start_requested)
+   self.session.record();self.session.handle('success')
+   self.assertEqual(self.session.status,'preparing')
+   self.assertEqual(self.session.completed,index+1)
+   self.assertIn(f'已保存 {index+1} 条',self.session.message)
+  paths=sorted(self.args.output.glob('episode_*'))
+  self.assertEqual([p.name for p in paths],[f'episode_{i:06d}' for i in range(4)])
+  self.assertTrue(all(json.loads((p/'manifest.json').read_text())['task_outcome']=='success' for p in paths))
+  self.session.handle('record');self.assertTrue(self.session.start_requested)
+ def test_explicit_episode_limit_still_finishes(self):
+  self.args.episodes=2
+  for _ in range(2):
+   self.session.poll();self.session.handle('record');self.session.record();self.session.handle('success')
+  self.assertEqual(self.session.status,'finished')
+  self.session.handle('record');self.assertFalse(self.session.start_requested)
+ def test_unlimited_session_passes_old_timeout_and_quits_normally(self):
+  self.args.run_seconds=0
+  ticks=[]
+  def poll():
+   ticks.append(self.clock())
+   self.clock.sleep(800.)
+   if len(ticks)==3:self.session.quit=True
+  with patch.object(self.session,'poll',side_effect=poll):self.session.run()
+  self.assertEqual(len(ticks),3)
+  self.assertGreater(ticks[-1]-ticks[0],1500.)
+  self.assertTrue(self.bridge.stopped)
+ def test_explicit_session_timeout_still_stops(self):
+  self.args.run_seconds=1500.
+  ticks=[]
+  def poll():
+   ticks.append(self.clock());self.clock.sleep(800.)
+  with patch.object(self.session,'poll',side_effect=poll):self.session.run()
+  self.assertEqual(len(ticks),2)
+  self.assertTrue(self.bridge.stopped)
  def test_runtime_failure_marks_episode_failed_and_stops(self):
   self.session.poll();original=self.bridge.poll;n=0
   def fail():

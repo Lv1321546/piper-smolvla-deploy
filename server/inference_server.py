@@ -111,6 +111,8 @@ def main(argv=None):
     parser.add_argument("--config", required=True)
     parser.add_argument("--mock", action="store_true")
     parser.add_argument("--port", type=int, help="Override port; 0 selects a free port")
+    parser.add_argument("--warmup", type=int, default=1, choices=range(0, 6),
+                        help="Warmup requests before listening (default: 1); never commands a robot")
     args = parser.parse_args(argv)
     with open(args.config, encoding="utf-8") as stream:
         config = json.load(stream)
@@ -118,6 +120,8 @@ def main(argv=None):
         config.setdefault("server", {})["port"] = args.port
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     runner = PolicyRunner(config, mock=args.mock).load()
+    for index in range(args.warmup):
+        LOG.info("Warmup %d: %.1f ms", index + 1, runner.warmup())
     server = create_app(runner, config)
     LOG.info("Listening on http://%s:%d backend=%s execution_ready=%s",
              *server.server_address, runner.metadata["backend"], runner.metadata["execution_ready"])

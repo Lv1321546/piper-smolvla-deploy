@@ -2,16 +2,16 @@
 
 日常 CAN 启用、手柄操控、相机、采集与服务器命令，见 [常用命令速查](常用命令.md)。
 
-代码入口已经实现；默认只读或 dry-run。模拟链路可以直接运行。真实策略训练和实机效果要用真实数据验证，当前没有 PiPER 微调模型。
+**PiPER 微调模型已完成训练。当前双相机真机推理入口见 [INFERENCE.md](INFERENCE.md)**：服务器加载选出的 4,000 步模型，E14 运行 `bash start_policy_inference.sh`，默认只读预测，显式 `--execute` 才输出。已完成模拟和真实 checkpoint 网络推理验证，实机闭环抓取仍待现场测试。
 
 **手柄遥操作与演示采集已集成：**见 [GAMEPAD.md](GAMEPAD.md)。没有手柄也可用 `python -m e14.gamepad_teleop --config config.mock.json --mock --demo` 先跑模拟；真实手柄和实机控制待现场验收。
 
 ## 放在哪里
 
 - E14：/home/eureka/piper_ws/smolvla_deploy
-- 服务器：/home/lvzx/workspace/piper_smolvla_deploy
+- 服务器部署快照：/home/lvzx/piper_smolvla_work/code/deploy_20261106；早期通用仓库为 /home/lvzx/workspace/piper_smolvla_deploy
 - NAS 模型、数据、输出：/mnt/nas_ailab_434/Personal_File/eureka
-- 一路固定 RGB 相机，命名 front。真实设备尚未填写，不会自动拿笔记本摄像头冒充固定相机。
+- 当前训练/推理使用两路 RGB：front 为 Dabai 腕上视角，astra 为 Astra 外部视角。`config.inference.example.json` 与采集时的相机身份和分辨率一致。
 
 所有命令都在代码根目录运行，使用 python -m，避免模块导入路径错误。
 
@@ -23,6 +23,8 @@
 | e14/cameras.py | E14 | 后台最新 RGB 帧、采集时刻、尺寸与超时检查 |
 | e14/inference_client.py | E14 | 图像编码、HTTP 请求、编号/频率/维度与过期检查 |
 | e14/run_robot.py | E14 | observe、dry-run、异步推理与固定频率执行闭环 |
+| e14/deploy_policy.py | E14 | 当前模型的双相机预览、异步推理与受限 SDK 输出 |
+| e14/replay_inference.py | 两端 | 已录制图像与状态的 HTTP 推理核对，不连接硬件 |
 | e14/collect_data.py | E14 | 只读示教采集，保存图像、状态和实际时间戳 |
 | e14/export_dataset.py | E14 或服务器 | LeRobot 格式导出、next-state 标签、训练/验证分集 |
 | server/policy_runner.py | 服务器 | 常驻模型、完整处理器、模型/统计/schema 校验 |

@@ -335,15 +335,15 @@ def main():
     parser.add_argument('--input', choices=('recorded', 'synthetic', 'gamepad', 'none'))
     parser.add_argument('--gamepad-config', default='gamepad.local.teleop.json')
     parser.add_argument('--scenario', choices=('xyz', 'x', 'singularity', 'collision', 'timeout'), default='xyz')
-    parser.add_argument('--duration', type=float, default=18.)
+    parser.add_argument('--duration', type=float, default=18., help='Session duration in seconds; 0 means unlimited')
     parser.add_argument('--max-cycles', type=int)
     parser.add_argument('--output', default='outputs/servo_bridge/run')
     parser.add_argument('--execution-mode', choices=('servo-position', 'integrated-velocity'), default='servo-position')
     parser.add_argument('--output-socket', help='Explicit future relay to a separately manually armed SDK worker')
     args = parser.parse_args()
     cfg = load_config(args.config)
-    if not math.isfinite(args.duration) or args.duration <= 0:
-        parser.error('duration must be positive and finite')
+    if not math.isfinite(args.duration) or args.duration < 0:
+        parser.error('duration must be nonnegative and finite; 0 means unlimited')
     args.input = args.input or {'log': 'recorded', 'sim': 'synthetic', 'can': 'none'}[args.source]
     if args.source == 'can' and args.input in ('recorded', 'synthetic'):
         parser.error('CAN feedback cannot use synthetic/recorded input')
@@ -434,7 +434,7 @@ def main():
                 if args.source == 'log':
                     done = source.index >= len(source.rows)
                 else:
-                    done = now - started >= args.duration
+                    done = args.duration > 0 and now - started >= args.duration
                 if done or args.max_cycles and node.seq >= args.max_cycles:
                     break
                 if any(p.poll() is not None for p in processes):

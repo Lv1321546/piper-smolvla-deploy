@@ -27,6 +27,8 @@ class CartesianLauncherTests(unittest.TestCase):
                        'PATH': str(folder)+os.pathsep+os.environ['PATH'],
                        'PIPER_DEMO_OUTPUT': str(folder/'data'), 'CALL_LOG': str(log)}
                 env.pop('SAFE_POSE', None)
+                env.pop('EPISODES', None)
+                env.pop('RUN_SECONDS', None)
                 result = subprocess.run(['bash', str(ROOT/'start_demo.sh')]+(['--check'] if check else []),
                                         cwd=ROOT, env=env, capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
@@ -42,6 +44,8 @@ class CartesianLauncherTests(unittest.TestCase):
                     self.assertIn('--fixed-home config.cartesian.home.local.json', calls)
                     self.assertIn('--preview-port 8768', calls)
                     self.assertIn('-m e14.collect_data', calls)
+                    self.assertIn('--episodes 0 --duration', calls)
+                    self.assertIn('--run-seconds 0', calls)
                     self.assertIn('--task Pick up the black foam block and place it in the box.', calls)
 
 

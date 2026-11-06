@@ -191,7 +191,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path, help="Local raw root; copy to NAS after collection")
     parser.add_argument("--task", required=True)
-    parser.add_argument("--episodes", type=int, default=1)
+    parser.add_argument("--episodes", type=int, default=1,
+                        help="Episode limit; 0 means unlimited for interactive/servo collection")
     parser.add_argument("--duration", type=float, default=2)
     parser.add_argument("--outcome", choices=["unknown", "success", "failure"], default="unknown",
                         help="Explicit operator task outcome, independent of recording completeness")
@@ -212,10 +213,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument('--servo-controller', choices=('cartesian', 'legacy'), default='cartesian')
     parser.add_argument('--orientation-mode', choices=('position', 'hold'), default='position')
     parser.add_argument('--gamepad-config', type=Path, default=ROOT/'gamepad.local.servo.json')
-    parser.add_argument('--run-seconds', type=float, default=300., help='Servo dashboard/session duration limit')
+    parser.add_argument('--run-seconds', type=float, default=300., help='Servo dashboard/session duration limit; 0 means unlimited')
     args = parser.parse_args(argv)
-    if args.episodes < 1:
-        parser.error("--episodes must be positive")
+    if args.episodes < 0:
+        parser.error("--episodes must be nonnegative")
+    if args.episodes == 0 and not (args.interactive or args.teleop == 'servo'):
+        parser.error("--episodes 0 requires --interactive or --teleop servo")
     if args.restart_can and not args.initialize_can:
         parser.error("--restart-can requires --initialize-can")
     if args.teleop == 'servo':

@@ -415,8 +415,10 @@ class TeachingSession:
         write_json(path, manifest)
         self.completed += 1
         self.review_path = None
-        self.status = "finished" if self.completed >= self.args.episodes else "preparing"
-        self.message = f"已标记 {outcome}；本次已保存 {self.completed}/{self.args.episodes} 条。准备下一条前摆回场景、张爪。"
+        limited = self.args.episodes > 0
+        self.status = "finished" if limited and self.completed >= self.args.episodes else "preparing"
+        progress = f"{self.completed}/{self.args.episodes}" if limited else str(self.completed)
+        self.message = f"已标记 {outcome}；本次已保存 {progress} 条。准备下一条前摆回场景、张爪。"
         self.start_requested = False
 
     def publish(self, frame_index=None):

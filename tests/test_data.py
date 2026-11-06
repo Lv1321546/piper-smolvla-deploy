@@ -104,6 +104,31 @@ class DataTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             episode_split(1)
 
+    def test_direct_encoded_export_preserves_jpeg_bytes_and_next_state(self):
+        from PIL import Image
+        import pyarrow.parquet as pq
+        from lerobot.datasets.lerobot_dataset import LeRobotDataset
+        sources=[]
+        for index in range(2):
+            path=self.record(index)
+            rows=[json.loads(line) for line in (path/'frames.jsonl').read_text().splitlines()]
+            for row in rows:
+                original=path/row['images']['front'];new=original.with_suffix('.jpg')
+                with Image.open(original) as image:image.save(new,quality=90)
+                row['images']['front']=str(new.relative_to(path))
+            (path/'frames.jsonl').write_text(''.join(json.dumps(row)+'\n' for row in rows))
+            sources.extend((path/r['images']['front']).read_bytes() for r in rows[:-1])
+        output=self.root/'encoded_dataset'
+        report=export_dataset(self.root/'raw',output,'local/direct',direct_encoded_images=True)
+        payload=[]
+        for parquet in sorted((output/'data').rglob('*.parquet')):
+            payload.extend(r['observation.images.front']['bytes'] for r in pq.read_table(parquet).to_pylist())
+        self.assertEqual(payload,sources)
+        self.assertTrue(report['direct_encoded_images'])
+        dataset=LeRobotDataset('local/direct',root=output)
+        self.assertEqual(len(dataset),8)
+        self.assertEqual(float(dataset[0]['action'][0]),1.)
+
     def test_actual_lerobot_export_load_and_train_only_stats(self):
         # A real v0.6.2 writer/reader round trip, using synthetic hardware only.
         from lerobot.datasets.lerobot_dataset import LeRobotDataset

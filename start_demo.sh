@@ -4,6 +4,7 @@
 # ./start_demo.sh --check  相机和反馈只读检查
 # 固定起点保存在 config.cartesian.home.local.json；启动、A 和 H 共用此目标
 # TASK / EPISODES / DURATION / RUN_SECONDS / CAMERA_CHECK_TIMEOUT
+# EPISODES=0 / RUN_SECONDS=0 表示不限条数 / 不限会话时长（默认）
 # PIPER_DEMO_CONFIG / PIPER_SERVO_CONFIG / PIPER_DEMO_OUTPUT / PREVIEW_PORT
 # XYZ_ORIENTATION=position|hold；XYZ_CONTROLLER=cartesian|legacy
 set -euo pipefail
@@ -35,9 +36,9 @@ OUTPUT=${PIPER_DEMO_OUTPUT:-data/piper_raw_cartesian_dual}
 PREVIEW_PORT=${PREVIEW_PORT:-8768}
 FIXED_HOME=${PIPER_FIXED_HOME:-config.cartesian.home.local.json}
 TASK=${TASK:-"Pick up the black foam block and place it in the box."}
-EPISODES=${EPISODES:-3}
+EPISODES=${EPISODES:-0}
 DURATION=${DURATION:-120}
-RUN_SECONDS=${RUN_SECONDS:-1500}
+RUN_SECONDS=${RUN_SECONDS:-0}
 CAMERA_CHECK_TIMEOUT=${CAMERA_CHECK_TIMEOUT:-45}
 CHECK_ONLY=0
 for arg in "$@"; do
@@ -67,8 +68,8 @@ import sys
 from servo_bridge.core import load_config
 cfg = load_config(sys.argv[1])
 cfg['cartesian_orientation_mode'] = sys.argv[3]
-if not math.isfinite(float(sys.argv[2])) or float(sys.argv[2]) <= 0:
-    raise ValueError('RUN_SECONDS 必须是正数')
+if not math.isfinite(float(sys.argv[2])) or float(sys.argv[2]) < 0:
+    raise ValueError('RUN_SECONDS 必须是非负数，0 表示不限时长')
 PY
 "$PY" -m servo_bridge.start_reference --config "$CONFIG" --profile "$SERVO_CONFIG"
 SAFE_POSE=$("$PY" -m servo_bridge.start_reference --config "$CONFIG" --profile "$SERVO_CONFIG" --fixed-home "$FIXED_HOME" --print-joints)

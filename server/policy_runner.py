@@ -134,6 +134,10 @@ class PolicyRunner:
             "joint_unit": "degree", "gripper_unit": "meter_full_opening",
             "action_mode": "absolute_position", "control_hz": config.get("robot", {}).get("control_hz", 20),
             "model_id": "mock-hold-current" if self.mock else str(self.options.get("model_path", "")),
+            "label_semantics": "next_state",
+            "cameras": {name: {k: camera[k] for k in ("width", "height")}
+                        for name, camera in config.get("cameras", {}).items()},
+            "action_chunk_steps": int(self.options.get("mock_chunk_steps", 10)) if self.mock else None,
         }
 
     @property
@@ -199,7 +203,7 @@ class PolicyRunner:
             raise ValueError("Only absolute PiPER joint targets are supported")
         os.environ["HF_HUB_OFFLINE"] = "1"
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
-        import numpy as np
+        import torch
         from lerobot.policies import make_pre_post_processors
         from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
         from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
@@ -210,7 +214,8 @@ class PolicyRunner:
             raise ValueError("Padded projection dimensions cannot accommodate PiPER")
         self.policy = SmolVLAPolicy.from_pretrained(str(model_path), config=cfg, strict=True)
         self.policy.eval()
-        tensor_stats = {f: {k: np.asarray(v) for k, v in entries.items()} for f, entries in stats.items()}
+        tensor_stats = {f: {k: torch.tensor(v, dtype=torch.float32) for k, v in entries.items()}
+                        for f, entries in stats.items()}
         self.preprocess, self.postprocess = make_pre_post_processors(
             cfg, str(model_path), preprocessor_overrides={
                 "tokenizer_processor": {"tokenizer_name": str(vlm_path)},
@@ -220,9 +225,22 @@ class PolicyRunner:
             },
         )
         self._metadata.update({"execution_ready": True, "control_hz": float(self.schema["control_hz"]),
-                               "model_id": manifest.get("model_id", str(model_path))})
+                               "model_id": manifest.get("model_id", str(model_path)),
+                               "cameras": self.schema["cameras"], "action_chunk_steps": cfg.chunk_size,
+                               "training_steps": manifest.get("training_steps"),
+                               "model_sha256": manifest["model_sha256"]})
         self.loaded = True
         return self
+
+    def warmup(self, task="Pick up the black foam block and place it in the box."):
+        """Exercise the exact request path before advertising a listening socket."""
+        import numpy as np
+        if not self.loaded:
+            raise RuntimeError("Load the policy before warmup")
+        cameras = self.metadata["cameras"]
+        images = {name: np.zeros((camera["height"], camera["width"], 3), dtype=np.uint8)
+                  for name, camera in cameras.items()}
+        return self.predict({"state": [0., 80., -60., 0., 40., 0., .04], "images": images}, task)[1]
 
     def predict(self, observation: dict, task: str) -> tuple[list[list[float]], float]:
         if not self.loaded:

@@ -110,6 +110,23 @@ def build_samples(episode: dict):
         yield frame
 
 
+def encoded_episode_buffer(episode, features, episode_index):
+    """Official save_episode(episode_data=...) buffer using original image paths.
+
+    load_raw_episode already validated decoded dimensions, bytes and timing.
+    The official writer embeds file bytes; no PNG round trip is necessary.
+    """
+    rows=episode['rows']; count=len(rows)-1; m=episode['manifest']
+    buffer={name: [] for name in features}
+    buffer.update(size=count, task=[m['task']]*count, episode_index=episode_index,
+                  frame_index=list(range(count)), timestamp=[i/m['control_hz'] for i in range(count)])
+    buffer['observation.state']=[np.asarray(r['state'],np.float32) for r in rows[:-1]]
+    buffer['action']=[np.asarray(r['state'],np.float32) for r in rows[1:]]
+    for camera in m['cameras']:
+        buffer[f'observation.images.{camera}']=[str(image_path(episode['path'],r['images'][camera])) for r in rows[:-1]]
+    return buffer
+
+
 def episode_split(count: int, validation_fraction: float = .2, seed: int = 42) -> dict:
     if count < 2:
         raise ValueError("At least two accepted episodes are required for disjoint train/validation")
@@ -163,7 +180,8 @@ def preserve_encoded_images(destination, episodes):
 
 
 def export_dataset(raw_root: str | Path, output: str | Path, repo_id: str, *,
-                   validation_fraction: float = .2, seed: int = 42, include_unknown: bool = False) -> dict:
+                   validation_fraction: float = .2, seed: int = 42, include_unknown: bool = False,
+                   direct_encoded_images: bool = False) -> dict:
     raw_root, output = Path(raw_root), Path(output)
     if output.exists():
         raise FileExistsError(f"Output exists; choose a new path: {output}")
@@ -210,9 +228,13 @@ def export_dataset(raw_root: str | Path, output: str | Path, repo_id: str, *,
         train_stats = []
         mapping = []
         for index, episode in enumerate(accepted):
-            for frame in build_samples(episode):
-                dataset.add_frame(frame)
-            dataset.save_episode()
+            if direct_encoded_images:
+                dataset.save_episode(episode_data=encoded_episode_buffer(episode,dataset.meta.features,index))
+            else:
+                for frame in build_samples(episode):
+                    dataset.add_frame(frame)
+                dataset.save_episode()
+            print(f"Exported episode {index+1}/{len(accepted)}",flush=True)
             mapping.append({"episode_index": index, "raw_source": str(episode["path"].resolve()),
                             "frames": len(episode["rows"]) - 1,
                             "task_outcome": episode["manifest"]["task_outcome"]})
@@ -225,7 +247,7 @@ def export_dataset(raw_root: str | Path, output: str | Path, repo_id: str, *,
                                                                 for r in rows[:-1]]
                 train_stats.append(compute_episode_stats(stats_input, features))
         dataset.finalize()
-        original_image_bytes=preserve_encoded_images(destination,accepted)
+        original_image_bytes=True if direct_encoded_images else preserve_encoded_images(destination,accepted)
         write_json(destination / "split.json", split)
         write_json(destination / "train_stats.json", serialize_dict(aggregate_stats(train_stats)))
         write_json(destination / "deployment_schema.json", schema)
@@ -234,6 +256,7 @@ def export_dataset(raw_root: str | Path, output: str | Path, repo_id: str, *,
                   "seed": seed, "split": split, "episodes": mapping, "excluded": excluded,
                   "mock": schema["mock"], "images_embedded_in_parquet": True,
                   "original_encoded_image_bytes_preserved": original_image_bytes,
+                  "direct_encoded_images": direct_encoded_images,
                   "normalization_stats": "train_stats.json (training split only)"}
         write_json(destination / "export_manifest.json", report)
         destination.rename(output)
@@ -251,12 +274,13 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--repo-id", default="local/piper_pickplace")
     parser.add_argument("--validation-fraction", type=float, default=.2)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--direct-encoded-images", action="store_true", help="Use official episode_data buffer to embed original image bytes without PNG conversion")
     parser.add_argument("--include-unknown", action="store_true",
                         help="Explicitly admit complete recordings with unannotated task outcome")
     args = parser.parse_args(argv)
     report = export_dataset(args.raw_root, args.output, args.repo_id,
                             validation_fraction=args.validation_fraction, seed=args.seed,
-                            include_unknown=args.include_unknown)
+                            include_unknown=args.include_unknown,direct_encoded_images=args.direct_encoded_images)
     print(json.dumps(report, ensure_ascii=False, indent=2))
 
 
