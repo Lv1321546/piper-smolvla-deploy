@@ -112,6 +112,28 @@ class FollowerTests(unittest.TestCase):
                 state, previous_velocity = q.tolist(), v.copy()
             self.assertAlmostEqual(state[6],endpoint,places=10)
 
+    def test_resume_restarts_joints_but_keeps_jaw_command_despite_encoder_offset(self):
+        target = self.arm.state.copy()
+        target[0] += 2.
+        target[6] += .005
+        for _ in range(6):
+            self.now += .05
+            fb, _, snap = self.arm.sample(self.now, .05)
+            q, v, _ = self.follower.step(target.tolist(), self.arm.state.tolist())
+            self.output.send(q.tolist(), v.tolist(), fb, snap)
+        last_width = self.output.last_width
+        self.arm.state[6] -= .0005  # A stable, real-style jaw encoder offset.
+        fb, _, _ = self.arm.sample(self.now, .05)
+        self.output.hold(fb)
+        before = self.arm.state.copy()
+        self.now += 2.
+        self.output.resume(self.follower, before.tolist())
+        q, v, _ = self.follower.step(target.tolist(), before.tolist())
+        self.assertLessEqual(abs(v[0]), .8*self.config['inference']['max_acceleration'][0]*.05+1e-8)
+        self.assertLessEqual(abs(q[6]-last_width), self.config['inference']['max_velocity'][6]*.05)
+        fb, _, snap = self.arm.sample(self.now, .05)
+        self.output.send(q.tolist(), v.tolist(), fb, snap)
+
 
 class ContractTests(unittest.TestCase):
     def test_position_goal_precedes_mode_even_if_already_in_can(self):
@@ -200,24 +222,184 @@ class DeploymentIntegrationTests(unittest.TestCase):
         self.assertTrue(any(x['event']=='measured_joint_hold_requested' for x in events))
         self.assertFalse(events[-1]['success'])
 
-    def test_exhausted_horizon_does_not_execute_a_late_response(self):
+    def test_exhausted_horizon_holds_discards_old_inflight_and_resumes_fresh(self):
+        self.config['client']['execution_horizon'] = 2
+        self.config['client']['inference_interval_steps'] = 1
+        original = self.runner.predict
+        calls = 0
+        def delayed(*args):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                time.sleep(.3)
+            actions, elapsed = original(*args)
+            for action in actions:
+                action[0] += 2.
+                action[6] += .005
+            return actions, elapsed
+        self.runner.predict = delayed
+        path = run(self.config,mock=True,execute=True,duration=1.1,no_preview=True)
+        rows = [json.loads(x) for x in (path/'events.jsonl').read_text().splitlines()]
+        self.assertTrue(rows[-1]['success'])
+        self.assertGreater(rows[-1]['prediction_waits'],0)
+        self.assertTrue(any(x['event']=='measured_joint_hold_requested' for x in rows))
+        discarded = [x['request_id'] for x in rows if x['event']=='prediction_discarded']
+        self.assertTrue(discarded)
+        self.assertTrue(any(x['event']=='prediction_discarded' and x['reason']=='source predates hold' for x in rows))
+        resumed = [x for x in rows if x['event']=='prediction_resumed' and x['fresh_after'] is not None]
+        self.assertTrue(resumed)
+        self.assertTrue(all(x['captured_monotonic']>=x['fresh_after'] for x in resumed))
+        self.assertFalse(set(discarded) & {x['request_id'] for x in resumed})
+        paused = False
+        resumes_checked = 0
+        for row in rows:
+            if row['event']=='prediction_wait_started' and not row.get('initial'):
+                paused = True
+            elif row['event']=='prediction_resumed':
+                if paused:
+                    paused = False
+                    resumes_checked += 1
+                    continue
+            elif row['event']=='cycle':
+                if paused:
+                    self.assertIsNone(row['command'])
+                    self.assertTrue(row['waiting_for_prediction'])
+        self.assertGreater(resumes_checked,0)
+        # Actual follower output resumes with bounded acceleration, not the old velocity.
+        for resume in resumed:
+            cycle = next(x for x in rows if x['event']=='cycle' and x['monotonic']>=resume['monotonic'])
+            self.assertLessEqual(abs(cycle['velocity'][0]), .8*15*.05+1e-8)
+
+    def test_initial_timeout_and_busy_responses_retry_then_start(self):
+        self.config['client'].update(timeout_ms=100,max_action_age_ms=500,retry_interval_ms=50)
+        original = self.runner.predict
+        calls = 0
+        def delayed(*args):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                time.sleep(.4)
+            return original(*args)
+        self.runner.predict = delayed
+        path = run(self.config,mock=True,execute=True,duration=1.,no_preview=True)
+        rows = [json.loads(x) for x in (path/'events.jsonl').read_text().splitlines()]
+        self.assertTrue(rows[-1]['success'])
+        self.assertGreater(rows[-1]['sent_commands'],0)
+        errors = [x for x in rows if x['event']=='prediction_retry']
+        self.assertTrue(any('deadline' in x['message'] for x in errors))
+        self.assertTrue(any('HTTP 429' in x['message'] for x in errors))
+
+    def test_repeated_expired_results_wait_until_duration_without_commands(self):
+        self.config['client'].update(timeout_ms=800,max_action_age_ms=100,retry_interval_ms=50)
+        original = self.runner.predict
+        def delayed(*args):
+            time.sleep(.17)
+            return original(*args)
+        self.runner.predict = delayed
+        path = run(self.config,mock=True,execute=True,duration=.7,no_preview=True)
+        summary = json.loads((path/'summary.json').read_text())
+        self.assertTrue(summary['success'])
+        self.assertTrue(summary['waiting_at_end'])
+        self.assertEqual(summary['sent_commands'],0)
+        self.assertGreaterEqual(summary['prediction_retries'],2)
+
+    def test_response_expiring_between_arrival_and_control_tick_is_discarded(self):
+        from e14.inference_client import InferenceClient
+        original = InferenceClient.predict
+        calls = 0
+        def boundary(client,*args,**kwargs):
+            nonlocal calls
+            result = original(client,*args,**kwargs)
+            calls += 1
+            if calls == 1:
+                # Valid at arrival (480 ms), expired when polled (>=520 ms).
+                result['captured_monotonic'] = time.monotonic()-.52
+                result['received_monotonic'] = result['captured_monotonic']+.48
+            return result
+        self.config['client']['max_action_age_ms'] = 500
+        with patch.object(InferenceClient,'predict',boundary):
+            path = run(self.config,mock=True,execute=True,duration=.5,no_preview=True)
+        rows = [json.loads(x) for x in (path/'events.jsonl').read_text().splitlines()]
+        self.assertTrue(rows[-1]['success'])
+        discarded = next(x for x in rows if x['event']=='prediction_discarded')
+        self.assertEqual(discarded['reason'],'expired before control tick')
+        self.assertNotIn(discarded['request_id'],[x['request_id'] for x in rows if x['event']=='prediction_resumed'])
+        self.assertGreater(rows[-1]['sent_commands'],0)
+
+    def test_sensor_failure_during_wait_is_still_terminal(self):
+        from e14.policy_control import SimulatedArm
+        class BadFeedback(SimulatedArm):
+            def __init__(self, config):
+                super().__init__(config)
+                self.samples = 0
+            def sample(self, now, dt):
+                self.samples += 1
+                feedback, _, snap = super().sample(now,dt)
+                if self.samples >= 5:
+                    feedback.ready = False
+                return feedback, None, snap
+        original = self.runner.predict
+        def delayed(*args):
+            time.sleep(.3)
+            return original(*args)
+        self.runner.predict = delayed
+        with patch('e14.deploy_policy.SimulatedArm',BadFeedback):
+            with self.assertRaisesRegex(RuntimeError,'Lost enabled healthy'):
+                run(self.config,mock=True,execute=True,duration=.8,no_preview=True)
+
+    def test_operator_stop_while_waiting_cannot_resume_from_pending_result(self):
+        original = self.runner.predict
+        def delayed(*args):
+            time.sleep(.4)
+            return original(*args)
+        self.runner.predict = delayed
+        class StopDashboard:
+            url = 'mock-preview'
+            def __enter__(self):
+                self.start = time.monotonic()
+                return self
+            def __exit__(self,*_): pass
+            def update(self,*_): pass
+            def drain(self):
+                return ['quit'] if time.monotonic()-self.start>.2 else []
+        with patch('e14.teaching_ui.Dashboard',return_value=StopDashboard()):
+            path = run(self.config,mock=True,execute=True,duration=2.)
+        rows = [json.loads(x) for x in (path/'events.jsonl').read_text().splitlines()]
+        self.assertTrue(any(x['event']=='operator_stop' for x in rows))
+        self.assertFalse(any(x['event']=='prediction_resumed' for x in rows))
+        self.assertEqual(rows[-1]['sent_commands'],0)
+        self.assertLess(rows[-1]['elapsed_s'],1.)
+
+    def test_hold_failure_is_terminal_instead_of_resuming(self):
         self.config['client']['execution_horizon'] = 2
         original = self.runner.predict
         calls = 0
         def delayed(*args):
             nonlocal calls
             calls += 1
-            if calls > 1:
+            if calls == 2:
                 time.sleep(.3)
             return original(*args)
         self.runner.predict = delayed
-        with self.assertRaisesRegex(TimeoutError,'horizon'):
-            run(self.config,mock=True,execute=True,duration=1.,no_preview=True)
+        with patch.object(PolicyOutput,'hold',side_effect=RuntimeError('synthetic hold failed')):
+            with self.assertRaisesRegex(RuntimeError,'synthetic hold failed'):
+                run(self.config,mock=True,execute=True,duration=.9,no_preview=True)
         path = next(Path(self.temp.name).glob('policy-*'))
         rows = [json.loads(x) for x in (path/'events.jsonl').read_text().splitlines()]
-        self.assertEqual(sum(x['event']=='prediction' for x in rows),1)
-        self.assertTrue(any(x['event']=='measured_joint_hold_requested' for x in rows))
         self.assertFalse(rows[-1]['success'])
+        self.assertEqual(sum(x['event']=='prediction_resumed' for x in rows),1)
+
+    def test_model_mismatch_is_fatal_even_in_an_expired_prediction(self):
+        from e14.inference_client import InferenceClient
+        original = InferenceClient.predict
+        def changed(client,*args,**kwargs):
+            result = original(client,*args,**kwargs)
+            result['response']['metadata']['model_id'] = 'unexpected-model'
+            result['captured_monotonic'] -= 2.
+            return result
+        with patch.object(InferenceClient,'predict',changed):
+            with self.assertRaisesRegex(ValueError,'model_id'):
+                run(self.config,mock=True,execute=True,duration=.5,no_preview=True)
 
     def test_recorded_inference_uses_next_state_and_no_hardware(self):
         episode = Path(self.temp.name)/'episode'

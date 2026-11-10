@@ -1,0 +1,186 @@
+{
+  "_note": "PiPER pi05: SuperSvr GPU 0/1/2 staggered replicas; 1000 ms freshness; read-only unless --execute.",
+  "robot": {
+    "can_interface": "can0",
+    "state_action_order": [
+      "joint1",
+      "joint2",
+      "joint3",
+      "joint4",
+      "joint5",
+      "joint6",
+      "gripper_width"
+    ],
+    "joint_unit": "degree",
+    "gripper_unit": "meter_full_opening",
+    "action_mode": "absolute_position",
+    "joint_limits_deg": [
+      [
+        -150,
+        150
+      ],
+      [
+        0,
+        180
+      ],
+      [
+        -170,
+        0
+      ],
+      [
+        -100,
+        100
+      ],
+      [
+        -70,
+        70
+      ],
+      [
+        -120,
+        120
+      ]
+    ],
+    "gripper_limits_m": [
+      0,
+      0.1
+    ],
+    "max_step_delta": [
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      0.0025
+    ],
+    "control_hz": 20,
+    "feedback_max_age_ms": 300,
+    "feedback_limit_tolerance_deg": 1,
+    "speed_percent": 70,
+    "gripper_effort": 500,
+    "enable_gripper": true
+  },
+  "cameras": {
+    "front": {
+      "device": "/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._Dabai_DC1_CC1365304K0-video-index0",
+      "width": 640,
+      "height": 480,
+      "fps": 30,
+      "max_age_ms": 200,
+      "fourcc": "MJPG",
+      "connect_timeout_s": 15,
+      "connect_retries": 3,
+      "buffer_size": 4,
+      "label": "Dabai DC1\uff08\u968f\u81c2\u4e3b\u89c6\u89d2\uff09",
+      "image_format": "jpeg",
+      "jpeg_quality": 90,
+      "jpeg_subsampling": 0
+    },
+    "astra": {
+      "device": "/dev/v4l/by-id/usb-Astra_Pro_HD_Camera_Astra_Pro_HD_Camera-video-index0",
+      "width": 640,
+      "height": 480,
+      "fps": 30,
+      "max_age_ms": 200,
+      "fourcc": "MJPG",
+      "connect_timeout_s": 15,
+      "connect_retries": 3,
+      "buffer_size": 4,
+      "label": "Astra Pro\uff08\u8f85\u52a9\u7b2c\u4e09\u89c6\u89d2\uff09",
+      "image_format": "jpeg",
+      "jpeg_quality": 80,
+      "jpeg_subsampling": 2
+    }
+  },
+  "client": {
+    "url": "http://127.0.0.1:8085",
+    "timeout_ms": 1200,
+    "max_action_age_ms": 1000,
+    "max_response_bytes": 2097152,
+    "execution_horizon": 12,
+    "inference_interval_steps": 4,
+    "dry_run": true,
+    "replica_urls": [
+      "http://127.0.0.1:8085",
+      "http://127.0.0.1:8086",
+      "http://127.0.0.1:8087"
+    ]
+  },
+  "server": {
+    "backend": "pi05",
+    "bind": "127.0.0.1",
+    "port": 8085,
+    "device": "cuda:0",
+    "model_path": "/home/lvzx/piper_pi05_work/runs/main_20261106_132250/checkpoints/032000/pretrained_model",
+    "vlm_path": null,
+    "manifest_path": "/home/lvzx/piper_pi05_work/deploy_supersvr_20261110/deployment_manifest.json",
+    "camera_map": {
+      "front": "observation.images.front",
+      "astra": "observation.images.astra"
+    },
+    "max_request_bytes": 8388608,
+    "max_image_pixels": 2073600,
+    "max_chunk_steps": 100,
+    "request_timeout_s": 5,
+    "mock_chunk_steps": 50
+  },
+  "collection": {
+    "max_sync_skew_ms": 100,
+    "max_period_error_ratio": 0.5,
+    "max_feedback_age_ms": 300
+  },
+  "storage": {
+    "raw_root": "data/raw",
+    "log_root": "/home/eureka/Documents/Codex/\u79d1\u7814\u9879\u76ee\u8d77\u6b65/outputs/pi05_multigpu_20261110/live_logs",
+    "nas_root": "/mnt/nas_ailab_434/Personal_File/eureka"
+  },
+  "inference": {
+    "expected_model_id": "piper-pi05-main_20261106_132250-updates008000",
+    "max_velocity": [
+      3.0,
+      3.0,
+      3.0,
+      3.0,
+      3.0,
+      3.0,
+      0.02
+    ],
+    "max_acceleration": [
+      15.0,
+      15.0,
+      15.0,
+      15.0,
+      15.0,
+      15.0,
+      0.08
+    ],
+    "max_model_delta": [
+      15.0,
+      15.0,
+      15.0,
+      15.0,
+      15.0,
+      15.0,
+      0.08
+    ],
+    "boundary_tolerance": [
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.001
+    ],
+    "max_tracking_error_deg": 4.0,
+    "mock_initial_state": [
+      0.0,
+      80.0,
+      -60.0,
+      0.0,
+      40.0,
+      0.0,
+      0.04
+    ]
+  }
+}

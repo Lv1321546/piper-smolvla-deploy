@@ -10,6 +10,8 @@ def check_model(metadata, config, *, physical=False):
                 for name, camera in config['cameras'].items()}
     if metadata.get('cameras') != expected or metadata.get('label_semantics') != 'next_state':
         raise ValueError('Model camera schema or action-label semantics differ from deployment')
+    if metadata.get('backend') != config['server']['backend']:
+        raise ValueError('Model backend differs from configured backend')
     pinned = config.get('inference', {}).get('expected_model_id')
     if pinned and metadata['model_id'] != pinned:
         raise ValueError(f'Unexpected model_id: {metadata["model_id"]}; expected {pinned}')

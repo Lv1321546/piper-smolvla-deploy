@@ -49,17 +49,23 @@ def main():
     parser.add_argument('host', nargs='?', default='Inspur')
     parser.add_argument('--local-port', type=int, default=8081)
     parser.add_argument('--remote-port', type=int, default=8081)
+    parser.add_argument('--replicas', type=int, default=1,
+                        help='Forward this many consecutive local/remote ports (default: 1)')
     args = parser.parse_args()
-    if not 1 <= args.local_port <= 65535 or not 1 <= args.remote_port <= 65535:
-        parser.error('Ports must be 1..65535')
+    if (args.replicas < 1 or not 1 <= args.local_port <= args.local_port+args.replicas-1 <= 65535
+            or not 1 <= args.remote_port <= args.remote_port+args.replicas-1 <= 65535):
+        parser.error('Positive replica count and complete port ranges within 1..65535 required')
     with tempfile.TemporaryDirectory(prefix='piper-inference-ssh-') as directory:
         file = Path(directory)/'config'
         file.write_text(tunnel_config(args.host))
         file.chmod(0o600)
-        print(f'HTTP tunnel: 127.0.0.1:{args.local_port} -> {args.host}:127.0.0.1:{args.remote_port}; Ctrl+C to close',flush=True)
+        forwards = []
+        for index in range(args.replicas):
+            forwards += ['-L', f'127.0.0.1:{args.local_port+index}:127.0.0.1:{args.remote_port+index}']
+            print(f'HTTP tunnel: 127.0.0.1:{args.local_port+index} -> {args.host}:127.0.0.1:{args.remote_port+index}; Ctrl+C to close',flush=True)
         try:
             return subprocess.call(['ssh','-F',str(file),'-N','-o','ExitOnForwardFailure=yes',
-                                    '-L',f'127.0.0.1:{args.local_port}:127.0.0.1:{args.remote_port}','inference-target'])
+                                    *forwards, 'inference-target'])
         except KeyboardInterrupt:
             return 130
 

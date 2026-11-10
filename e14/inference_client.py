@@ -10,6 +10,22 @@ import uuid
 from shared.protocol import dumps, encode_images, validate_metadata, validate_request, validate_response
 
 
+class InferenceHTTPError(RuntimeError):
+    def __init__(self, status, message):
+        self.status = status
+        super().__init__(message)
+
+
+def retryable_prediction_error(error):
+    """Only request timing/transport failures and explicit busy/read timeouts.
+
+    Malformed predictions, model failures (503), and schema mismatches are fatal.
+    Call this only around inference I/O, never around sensors or actuator writes.
+    """
+    return (isinstance(error, (TimeoutError, OSError, http.client.HTTPException)) or
+            isinstance(error, InferenceHTTPError) and error.status in (408, 429))
+
+
 class InferenceClient:
     def __init__(self, config):
         self.config = config
@@ -60,7 +76,8 @@ class InferenceClient:
             if len(raw) > self.max_bytes:
                 raise ValueError('Inference response too large')
             if response.status != 200:
-                raise RuntimeError(f'Inference HTTP {response.status}: {raw[:4096].decode("utf-8", errors="replace")}')
+                raise InferenceHTTPError(response.status,
+                    f'Inference HTTP {response.status}: {raw[:4096].decode("utf-8", errors="replace")}')
             return json.loads(raw)
         except (OSError, http.client.HTTPException, ValueError) as error:
             if expired.is_set() or time.monotonic() > deadline:

@@ -140,6 +140,20 @@ class PolicyOutput:
         # never open, disable, reset or switch to the damped-falling stop mode.
         self.holder.hold(feedback)
 
+    def resume(self, follower, measured):
+        """Restart joints from measured hold, retaining the jaw's last target.
+
+        A real jaw can settle with a small encoder offset. Keep its command
+        reference so resuming cannot jump the jaw goal back to that reading.
+        """
+        if self.holder.moved:
+            raise RuntimeError('Resume requires a successful position hold first')
+        reference = vector7(measured)
+        if self.last_width is not None:
+            reference[6] = self.last_width
+        follower.reset(reference)
+        self.last_time = None
+
 
 class SimulatedArm:
     """Synthetic test plant/writer; not a robot-dynamics or task-success test."""

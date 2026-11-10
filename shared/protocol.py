@@ -97,7 +97,7 @@ def validate_metadata(metadata, expected_hz=None, require_executable=False):
         raise ValueError('Missing model_id')
     if not isinstance(metadata.get('execution_ready'), bool):
         raise ValueError('execution_ready must be boolean')
-    if require_executable and (metadata['execution_ready'] is not True or metadata.get('backend') != 'smolvla'):
+    if require_executable and (metadata['execution_ready'] is not True or metadata.get('backend') not in ('smolvla', 'pi05')):
         raise ValueError('Mock/base diagnostic policies cannot execute on physical PiPER')
     return metadata
 

@@ -129,7 +129,7 @@ class PolicyRunner:
         self.policy = self.preprocess = self.postprocess = None
         self.schema = None
         self._metadata = {
-            "protocol_version": PROTOCOL_VERSION, "backend": "mock" if self.mock else "smolvla",
+            "protocol_version": PROTOCOL_VERSION, "backend": "mock" if self.mock else self.options.get("backend", "smolvla"),
             "execution_ready": False, "robot_type": "piper", "action_names": list(ACTION_NAMES),
             "joint_unit": "degree", "gripper_unit": "meter_full_opening",
             "action_mode": "absolute_position", "control_hz": config.get("robot", {}).get("control_hz", 20),
@@ -186,8 +186,11 @@ class PolicyRunner:
             raise ValueError("Normalization statistics differ from deployment manifest")
         stats = json.loads(stats_path.read_text())
         validate_stats(stats)
+        backend = self.options.get("backend", "smolvla")
+        if backend not in ("smolvla", "pi05") or raw_config.get("type") != backend:
+            raise ValueError("Configured backend differs from checkpoint policy type")
         vlm_path = Path(self.options.get("vlm_path") or raw_config.get("vlm_model_name", ""))
-        if not vlm_path.is_dir():
+        if backend == "smolvla" and not vlm_path.is_dir():
             raise ValueError("server.vlm_path must reference local SmolVLM/tokenizer files")
         expected_features = {f"observation.images.{name}" for name in self.schema["cameras"]}
         camera_map = self.options.get("camera_map", {})
@@ -205,22 +208,39 @@ class PolicyRunner:
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
         import torch
         from lerobot.policies import make_pre_post_processors
-        from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
-        from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
         device = self.options.get("device", "cuda:0")
-        cfg = SmolVLAConfig.from_pretrained(str(model_path), local_files_only=True)
-        cfg.device, cfg.vlm_model_name, cfg.load_vlm_weights = device, str(vlm_path), False
+        if backend == "pi05":
+            from lerobot.policies.pi05.configuration_pi05 import PI05Config
+            from lerobot.policies.pi05.modeling_pi05 import PI05Policy
+            from transformers.initialization import no_init_weights
+            from safetensors.torch import load_file
+            cfg = PI05Config.from_pretrained(str(model_path), local_files_only=True)
+            cfg.device = device
+            with no_init_weights():
+                self.policy = PI05Policy(cfg)
+            state = load_file(str(weights), device="cpu")
+            state = self.policy._fix_pytorch_state_dict_keys(state, cfg)
+            state = {(k if k.startswith("model.") else "model."+k): v for k,v in state.items()}
+            state = self.policy._prepare_pretrained_state_dict(state)
+            self.policy.load_state_dict(state, strict=True)
+            del state
+        else:
+            from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
+            from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
+            cfg = SmolVLAConfig.from_pretrained(str(model_path), local_files_only=True)
+            cfg.device, cfg.vlm_model_name, cfg.load_vlm_weights = device, str(vlm_path), False
+            self.policy = SmolVLAPolicy.from_pretrained(str(model_path), config=cfg, strict=True)
         if cfg.max_state_dim < 7 or cfg.max_action_dim < 7:
             raise ValueError("Padded projection dimensions cannot accommodate PiPER")
-        self.policy = SmolVLAPolicy.from_pretrained(str(model_path), config=cfg, strict=True)
         self.policy.eval()
         tensor_stats = {f: {k: torch.tensor(v, dtype=torch.float32) for k, v in entries.items()}
                         for f, entries in stats.items()}
+        pre_overrides = {"device_processor": {"device": device},
+                         "normalizer_processor": {"stats": tensor_stats}}
+        if backend == "smolvla":
+            pre_overrides["tokenizer_processor"] = {"tokenizer_name": str(vlm_path)}
         self.preprocess, self.postprocess = make_pre_post_processors(
-            cfg, str(model_path), preprocessor_overrides={
-                "tokenizer_processor": {"tokenizer_name": str(vlm_path)},
-                "device_processor": {"device": device}, "normalizer_processor": {"stats": tensor_stats},
-            }, postprocessor_overrides={
+            cfg, str(model_path), preprocessor_overrides=pre_overrides, postprocessor_overrides={
                 "device_processor": {"device": "cpu"}, "unnormalizer_processor": {"stats": tensor_stats},
             },
         )

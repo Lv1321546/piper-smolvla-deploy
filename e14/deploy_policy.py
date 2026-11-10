@@ -5,7 +5,6 @@ time-aligned action chunks and a rate-limited absolute-position follower.
 No ROS/Cartesian inverse kinematics, arming token, reset or automatic homing.
 """
 import argparse
-import concurrent.futures
 from contextlib import ExitStack
 import json
 import math
@@ -14,7 +13,8 @@ import signal
 import time
 
 from e14.cameras import CameraReader
-from e14.inference_client import InferenceClient
+from e14.inference_client import retryable_prediction_error
+from e14.staggered_inference import StaggeredInference
 from e14.policy_control import PolicyOutput, PositionFollower, SimulatedArm, guard_config, select_position_mode
 from e14.run_robot import capture_observation, select_action_chunk
 from shared.config import load_config
@@ -62,11 +62,12 @@ def run(config, *, execute=False, observe=False, mock=False, duration=30., task=
     hz, period = config['robot']['control_hz'], follower.period
     if config['client']['max_action_age_ms'] <= 0 or config['client']['execution_horizon'] < 1:
         raise ValueError('Positive action age and execution horizon required')
+    retry_period = finite_number(config['client'].get('retry_interval_ms', 250),
+                                 'client.retry_interval_ms', positive=True) / 1000
     root = Path(config['storage']['log_root']) / ('policy-' + time.strftime('%Y%m%d-%H%M%S') + '-' + str(time.time_ns()%1000000))
     root.mkdir(parents=True, exist_ok=False)
-    client = None if observe else InferenceClient(config)
-    metadata = check_model(client.health(require_executable=execute and not mock), config,
-                           physical=execute and not mock) if client else None
+    client = None if observe else StaggeredInference(config)
+    metadata = client.health(require_executable=execute and not mock) if client else None
     with ExitStack() as stack:
         events = stack.enter_context((root/'events.jsonl').open('x', buffering=1))
         def event(kind, **values):
@@ -132,13 +133,40 @@ def run(config, *, execute=False, observe=False, mock=False, duration=30., task=
                             raise RuntimeError('Gripper enable feedback timed out')
                         time.sleep(.02)
             output = PolicyOutput(config, writer)
-        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix='policy-http')
-        future = active = None
+        active = None
         failure = None
         count = sent = predictions = 0
         start = due = time.monotonic()
-        last_request = -math.inf
+        waiting, waiting_since, waiting_reason = True, start, '等待首次有效预测'
+        # Startup has no preceding motion. Later waits require source samples
+        # captured AFTER the measured-position hold, not just late arrivals.
+        fresh_after = -math.inf
+        waits = resumes = retries = discarded = 0
+        newest_capture = -math.inf
         last_cycle = None
+        def begin_wait(reason, feedback):
+            nonlocal active, waiting, waiting_since, waiting_reason, fresh_after, waits
+            active = None
+            waiting_reason = reason
+            if waiting:
+                return
+            if output and output.holder.moved:
+                output.hold(feedback)  # Failure to hold is terminal, never retried.
+                event('measured_joint_hold_requested', gripper='last command retained', reason=reason)
+            waiting = True
+            waiting_since = fresh_after = time.monotonic()
+            waits += 1
+            event('prediction_wait_started', reason=reason)
+            print('预测暂不可用，位置保持并等待新预测：'+reason, flush=True)
+
+        def usable(result, now):
+            try:
+                return select_action_chunk(result, now, hz,
+                    config['client']['max_action_age_ms']/1000, config['client']['execution_horizon'])
+            except TimeoutError:
+                return None
+
+        event('prediction_wait_started', reason=waiting_reason, initial=True)
         print(f"Mode: {'SIMULATED ' if mock else ''}{'EXECUTE' if execute else 'OBSERVE' if observe else 'DRY-RUN'}; duration={duration}s", flush=True)
         try:
             while time.monotonic()-start < duration:
@@ -153,27 +181,69 @@ def run(config, *, execute=False, observe=False, mock=False, duration=30., task=
                 now = time.monotonic()
                 if execute and (not feedback.ready or snapshot['gripper_faults'] or not snapshot['gripper_enabled']):
                     raise RuntimeError('Lost enabled healthy CAN/MOVE_J or gripper feedback')
-                if future and future.done():
-                    active = future.result()
-                    future = None
-                    validate_response(active['response'], active['request_id'], hz, execute and not mock)
-                    received_metadata = check_model(active['response']['metadata'], config, physical=execute and not mock)
-                    if received_metadata['model_id'] != metadata['model_id']:
-                        raise ValueError('Model changed during control session')
-                    predictions += 1
-                    event('prediction', **active)
-                if client and future is None and now-last_request >= config['client']['inference_interval_steps']/hz:
-                    future = pool.submit(client.predict, observation, task, None, execute and not mock)
-                    last_request = now
+                # Validate every completion, including older results and errors.
+                # Then accept the newest usable source before expiring the old plan.
+                candidates = []
+                for replica_index, completed in client.completed() if client else []:
+                    try:
+                        candidate = completed.result()
+                    except Exception as exc:
+                        if not retryable_prediction_error(exc):
+                            raise
+                        retries += 1
+                        client.defer(replica_index, time.monotonic() + retry_period)
+                        event('prediction_retry', message=str(exc), error_type=type(exc).__name__,
+                              replica_index=replica_index, replica_url=client.urls[replica_index])
+                        if active is None:
+                            waiting_reason = '预测请求超时或连接暂不可用，正在重试'
+                    else:
+                        # Protocol/model errors remain fatal, even for a result
+                        # that is too old to move the robot.
+                        validate_response(candidate['response'], candidate['request_id'], hz, execute and not mock)
+                        received_metadata = check_model(candidate['response']['metadata'], config, physical=execute and not mock)
+                        if any(received_metadata.get(key) != metadata.get(key)
+                               for key in ('model_id', 'model_sha256', 'action_chunk_steps')):
+                            raise ValueError('Model changed during control session')
+                        predictions += 1
+                        event('prediction', **candidate)
+                        candidates.append(candidate)
+                for candidate in sorted(candidates, key=lambda item: item['captured_monotonic'], reverse=True):
+                    now = time.monotonic()
+                    captured = candidate['captured_monotonic']
+                    reason = ('source predates hold' if captured < fresh_after else
+                              'superseded by newer observation' if captured <= newest_capture else
+                              'expired before control tick' if usable(candidate, now) is None else None)
+                    if reason:
+                        discarded += 1
+                        event('prediction_discarded', request_id=candidate['request_id'], reason=reason,
+                              replica_index=candidate['replica_index'])
+                    else:
+                        if waiting:
+                            if output:
+                                output.resume(follower, observation['state'])
+                            else:
+                                follower.reset(observation['state'])
+                            event('prediction_resumed', request_id=candidate['request_id'],
+                                  waited_s=now-waiting_since, captured_monotonic=captured,
+                                  fresh_after=None if fresh_after == -math.inf else fresh_after)
+                            resumes += 1
+                            waiting = False
+                            print('已收到新鲜预测，从当前状态继续。', flush=True)
+                        active = candidate
+                        newest_capture = captured
                 action = command = target = velocity = None
                 rejected = None
                 if active:
-                    action = select_action_chunk(active, now, hz, config['client']['max_action_age_ms']/1000,
-                                                 config['client']['execution_horizon'])
+                    now = time.monotonic()
+                    action = usable(active, now)
                     if action is None:
-                        raise TimeoutError('No fresh action horizon; position hold requested')
-                elif client and now-start > config['client']['timeout_ms']/1000:
-                    raise TimeoutError('Initial prediction deadline exceeded')
+                        begin_wait('动作已过期或可执行时域已耗尽', feedback)
+                if client and observation['captured_monotonic'] >= fresh_after:
+                    replica_index = client.submit(observation, task, now, execute and not mock)
+                    if replica_index is not None:
+                        event('prediction_requested', captured_monotonic=observation['captured_monotonic'],
+                              waiting=waiting, replica_index=replica_index,
+                              replica_url=client.urls[replica_index])
                 if action is not None:
                     try:
                         dt = period if last_cycle is None else now-last_cycle
@@ -190,16 +260,23 @@ def run(config, *, execute=False, observe=False, mock=False, duration=30., task=
                     return None if x is None else x.tolist()
                 status = dict(mode='execute' if execute else 'observe' if observe else 'dry-run', mock=mock,
                               model_id=metadata['model_id'] if metadata else None,
-                              message='正在执行预测；Q / 空格 / Ctrl+C 请求位置保持并退出' if execute else '只读预览；未向机械臂发送指令',
+                              message=(('位置保持，等待新预测：' if execute else '只读等待新预测：')+waiting_reason
+                                       if client and waiting else
+                                       '正在执行预测；Q / 空格 / Ctrl+C 请求位置保持并退出' if execute else '只读预览；未向机械臂发送指令'),
+                              waiting_for_prediction=bool(client and waiting),
+                              waiting_s=round(now-waiting_since, 3) if client and waiting else 0.,
                               state=observation['state'], raw_action=action, bounded_target=values(target),
                               command=values(command), velocity=values(velocity), rejected=rejected,
+                              action_source_monotonic=active['captured_monotonic'] if action is not None else None,
+                              action_age_ms=(now-active['captured_monotonic'])*1000 if action is not None else None,
+                              active_replica=active['replica_index'] if action is not None else None,
                               image_age_ms={n:round((now-t)*1000,1) for n,t in observation['image_timestamps'].items()},
                               predictions=predictions, sent_commands=sent)
                 event('cycle', **status)
                 if dashboard:
                     dashboard.update(status, observation['images'])
                 if count % max(1, round(hz)) == 0:
-                    print(f"t={now-start:.1f}s predictions={predictions} sent={sent} state={observation['state']}" +
+                    print(f"t={now-start:.1f}s predictions={predictions} sent={sent} waiting={bool(client and waiting)} state={observation['state']}" +
                           (f' rejected={rejected}' if rejected else ''), flush=True)
                 count += 1
                 last_cycle = now
@@ -218,14 +295,15 @@ def run(config, *, execute=False, observe=False, mock=False, duration=30., task=
                     event('hold_unavailable', message=str(exc))
                     if failure is None:
                         failure = exc
-            if future:
-                future.cancel()
             # Hold first, then let the bounded HTTP request finish. Otherwise an
             # immediate next session can collide with the preceding server job.
-            pool.shutdown(wait=True, cancel_futures=True)
+            if client:
+                client.close()
             summary = dict(success=failure is None, mode='execute' if execute else 'observe' if observe else 'dry-run',
                            mock=mock, predictions=predictions, sent_commands=sent, cycles=count,
                            elapsed_s=time.monotonic()-start, error=str(failure) if failure else None,
+                           prediction_waits=waits, prediction_resumes=resumes, prediction_retries=retries,
+                           discarded_predictions=discarded, waiting_at_end=bool(client and waiting),
                            metadata=metadata)
             (root/'summary.json').write_text(json.dumps(summary, indent=2)+'\n')
             event('end', **summary)
